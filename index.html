@@ -1,0 +1,2304 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="PG / BA Schedule Dashboard — Field Operation Management System">
+    <title>PG / BA Schedule Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+    <style>
+        /* ── Timeline Grid: 160px brand + 14 hour cols ── */
+        .tl-grid {
+            display: grid;
+            grid-template-columns: 160px repeat(14, minmax(36px, 1fr));
+        }
+
+        /* ── Tab bar ── */
+        .tab-btn {
+            padding: 10px 20px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #64748b;
+            border-bottom: 2px solid transparent;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.15s;
+            cursor: pointer;
+            background: transparent;
+            white-space: nowrap;
+        }
+
+        .tab-btn:hover {
+            color: #3b82f6;
+        }
+
+        .tab-btn.active {
+            color: #3b82f6;
+            border-bottom-color: #3b82f6;
+        }
+
+        /* ── Status badges ── */
+        .badge-active {
+            background: #dcfce7;
+            color: #15803d;
+            border: 1px solid #86efac;
+        }
+
+        .badge-off {
+            background: #f1f5f9;
+            color: #64748b;
+            border: 1px solid #cbd5e1;
+        }
+
+        .badge-pending {
+            background: #fef9c3;
+            color: #a16207;
+            border: 1px solid #fde047;
+        }
+
+        .badge-training {
+            background: #ede9fe;
+            color: #6d28d9;
+            border: 1px solid #c4b5fd;
+        }
+
+        .badge-sampling {
+            background: #e0f2fe;
+            color: #0369a1;
+            border: 1px solid #7dd3fc;
+        }
+
+        .badge-event {
+            background: #fce7f3;
+            color: #be185d;
+            border: 1px solid #f9a8d4;
+        }
+
+        /* ── Brand chips ── */
+        .chip-pg {
+            background: #dbeafe;
+            color: #1d4ed8;
+            border: 1px solid #93c5fd;
+        }
+
+        .chip-maggi {
+            background: #fee2e2;
+            color: #b91c1c;
+            border: 1px solid #fca5a5;
+        }
+
+        .chip-nestle {
+            background: #e0f2fe;
+            color: #0369a1;
+            border: 1px solid #7dd3fc;
+        }
+
+        .chip-vinda {
+            background: #fef3c7;
+            color: #92400e;
+            border: 1px solid #fde68a;
+        }
+
+        .chip-default {
+            background: #ede9fe;
+            color: #6d28d9;
+            border: 1px solid #c4b5fd;
+        }
+
+        .chip-vacant {
+            background: #ffe4e6;
+            color: #e11d48;
+            border: 1px solid #fda4af;
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: .7;
+            }
+        }
+
+        /* ── Pagination ── */
+        .page-btn {
+            width: 30px;
+            height: 30px;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            font-size: 12px;
+            color: #64748b;
+            background: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s;
+        }
+
+        .page-btn:hover {
+            border-color: #3b82f6;
+            color: #3b82f6;
+            background: #eff6ff;
+        }
+
+        .page-btn.pg-active {
+            background: #3b82f6;
+            color: white;
+            border-color: #3b82f6;
+        }
+
+        /* ── KPI hover ── */
+        .kpi-card {
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .kpi-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(59, 130, 246, 0.15);
+        }
+
+        /* ── Shimmer ── */
+        @keyframes shimmer {
+            0% {
+                background-position: -400px 0;
+            }
+
+            100% {
+                background-position: 400px 0;
+            }
+        }
+
+        .shimmer {
+            background: linear-gradient(90deg, #f0f4f8 25%, #e2e8f0 50%, #f0f4f8 75%);
+            background-size: 800px 100%;
+            animation: shimmer 1.4s infinite;
+            border-radius: 6px;
+        }
+
+        /* ── Scrollbar ── */
+        ::-webkit-scrollbar {
+            width: 5px;
+            height: 5px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f8fafc;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        /* ── BA Grid cells ── */
+        .ba-cell {
+            min-width: 28px;
+            width: 28px;
+            height: 24px;
+            font-size: 9px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #f1f5f9;
+            cursor: default;
+            transition: transform 0.1s;
+        }
+
+        .ba-cell:hover {
+            transform: scale(1.2);
+            z-index: 10;
+            position: relative;
+        }
+
+        .ba-0 {
+            background: #f8fafc;
+            color: #e2e8f0;
+        }
+
+        .ba-1 {
+            background: #bfdbfe;
+            color: #1d4ed8;
+        }
+
+        .ba-2 {
+            background: #60a5fa;
+            color: white;
+        }
+
+        .ba-3p {
+            background: #1d4ed8;
+            color: white;
+        }
+
+        .ba-wk-col {
+            background: #fef9c3 !important;
+        }
+
+        .ba-wk-col.ba-1 {
+            background: #fbbf24 !important;
+            color: #78350f;
+        }
+
+        .ba-wk-col.ba-2 {
+            background: #f59e0b !important;
+            color: white;
+        }
+
+        .ba-wk-col.ba-3p {
+            background: #d97706 !important;
+            color: white;
+        }
+
+        /* ── Weekend coverage card ── */
+        .wk-sup-card {
+            min-width: 200px;
+            max-width: 280px;
+            border-radius: 10px;
+            padding: 10px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        /* ── Tooltip ── */
+        [title] {
+            cursor: help;
+        }
+
+        /* ── Print Styles ── */
+        @media screen {
+            #print-area {
+                display: none;
+            }
+        }
+
+        @media print {
+            body> :not(#print-area) {
+                display: none !important;
+            }
+
+            #print-area {
+                display: block !important;
+                width: 100%;
+                font-family: sans-serif;
+                color: black;
+            }
+
+            @page {
+                size: landscape;
+                margin: 12mm;
+            }
+
+            .print-title {
+                text-align: center;
+                font-size: 20px;
+                font-weight: bold;
+                margin-bottom: 8px;
+                text-transform: uppercase;
+            }
+
+            .print-subtitle {
+                text-align: center;
+                font-size: 13px;
+                margin-bottom: 24px;
+                color: #333;
+            }
+
+            .region-title {
+                font-size: 15px;
+                font-weight: bold;
+                margin: 24px 0 8px 0;
+                padding: 6px 10px;
+                background: #e2e8f0 !important;
+                border: 1px solid #cbd5e1;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+
+            .print-table {
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 11px;
+                margin-bottom: 15px;
+                page-break-inside: auto;
+            }
+
+            .print-table tr {
+                page-break-inside: avoid;
+                page-break-after: auto;
+            }
+
+            .print-table th,
+            .print-table td {
+                border: 1px solid #64748b;
+                padding: 6px 8px;
+                text-align: left;
+            }
+
+            .print-table th {
+                background-color: #f8fafc !important;
+                font-weight: bold;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+
+            .print-note-box {
+                width: 100%;
+                height: 100%;
+                min-height: 24px;
+            }
+        }
+    </style>
+</head>
+
+<body class="bg-slate-100 min-h-screen" style="font-family:system-ui,sans-serif">
+
+    <!-- ═══ LOGIN OVERLAY ═══════════════════════════════════════ -->
+    <div id="login-overlay"
+        class="fixed inset-0 bg-slate-100 flex flex-col items-center justify-center z-[100] transition-opacity duration-300">
+        <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-sm border border-slate-200 text-center">
+            <div
+                class="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-200">
+                <i class="fa-solid fa-chart-gantt text-white text-2xl"></i>
+            </div>
+            <h2 class="text-xl font-bold text-slate-800 mb-1">Đăng Nhập</h2>
+            <p class="text-xs text-slate-500 mb-6">Field Operation Dashboard</p>
+
+            <div class="space-y-4">
+                <input type="text" id="login-user" placeholder="Tên đăng nhập"
+                    class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all"
+                    onkeydown="if(event.key==='Enter') doLogin()">
+                <input type="password" id="login-pass" placeholder="Mật khẩu"
+                    class="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all"
+                    onkeydown="if(event.key==='Enter') doLogin()">
+
+                <button id="btn-login" onclick="doLogin()"
+                    class="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-sm shadow-md shadow-blue-200 transition-all flex justify-center items-center gap-2">
+                    Đăng Nhập
+                </button>
+                <p id="login-error" class="text-xs text-red-500 hidden mt-2"></p>
+            </div>
+        </div>
+    </div>
+    <!-- ═══ LOADING OVERLAY ═══════════════════════════════════════ -->
+    <div id="loading-overlay"
+        class="fixed inset-0 bg-white/70 backdrop-blur-sm flex flex-col items-center justify-center z-50 gap-3">
+        <div class="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
+        <p class="text-slate-500 text-sm" id="loading-text">Đang khởi động...</p>
+    </div>
+
+    <!-- Scroll to top button -->
+    <button id="btn-back-to-top" onclick="window.scrollTo({top:0, behavior:'smooth'})"
+        class="fixed bottom-6 right-6 w-10 h-10 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-lg shadow-indigo-300 flex items-center justify-center transition-all duration-300 opacity-0 pointer-events-none z-[90]">
+        <i class="fa-solid fa-arrow-up"></i>
+    </button>
+
+    <!-- ═══ MAIN ══════════════════════════════════════════════════ -->
+    <div class="max-w-7xl mx-auto p-3 md:p-5">
+        <div class="bg-white rounded-2xl shadow border border-slate-200 overflow-hidden">
+
+            <!-- ① HEADER ─────────────────────────────────────────────── -->
+            <div class="bg-gradient-to-r from-blue-700 via-blue-600 to-indigo-600 px-5 py-4">
+                <div class="flex items-center justify-between flex-wrap gap-3">
+                    <div class="flex items-center gap-3">
+                        <div class="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center">
+                            <i class="fa-solid fa-chart-gantt text-white"></i>
+                        </div>
+                        <div>
+                            <h1 class="text-white font-bold text-base leading-tight">PG / BA Schedule Dashboard</h1>
+                            <p class="text-blue-200 text-xs">Field Operation Management System</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3 text-xs">
+                        <span id="demo-badge"
+                            class="hidden px-2 py-1 rounded-full bg-amber-400 text-amber-900 font-semibold text-[11px]">⚠
+                            DEMO</span>
+
+                        <!-- USER BADGE -->
+                        <div id="user-badge"
+                            class="hidden items-center bg-white/10 rounded-lg pr-1 pl-3 py-1 gap-2 border border-white/10">
+                            <div class="flex flex-col text-right leading-none">
+                                <span id="user-name" class="text-white font-semibold"></span>
+                                <span id="user-role" class="text-blue-200 text-[9px] uppercase tracking-wider"></span>
+                            </div>
+                            <button onclick="doLogout()"
+                                class="w-7 h-7 bg-white/20 hover:bg-red-500/80 rounded-md flex items-center justify-center text-white transition-colors"
+                                title="Đăng xuất">
+                                <i class="fa-solid fa-power-off text-[10px]"></i>
+                            </button>
+                        </div>
+
+                        <span id="last-updated" class="text-blue-200"></span>
+                        <time id="live-clock" class="text-blue-100 font-mono hidden md:block"></time>
+                        <button id="btn-export-pdf" onclick="exportPDF()"
+                            class="hidden md:flex bg-emerald-500/80 hover:bg-emerald-500 border border-emerald-400/50 rounded-lg px-3 py-1.5 items-center gap-2 text-white text-xs font-semibold shadow-sm transition-all"
+                            title="In / Xuất PDF lịch đi tuần">
+                            <i class="fa-solid fa-file-pdf"></i> In Lịch QC
+                        </button>
+                        <button id="btn-refresh" onclick="handleRefresh()"
+                            class="w-8 h-8 bg-white/20 hover:bg-white/30 rounded-lg flex items-center justify-center text-white transition-colors"
+                            title="Làm mới">
+                            <i id="refresh-icon" class="fa-solid fa-rotate-right text-sm"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ② TAB BAR ─────────────────────────────────────────────── -->
+            <div class="flex border-b border-slate-200 bg-slate-50/50 overflow-x-auto">
+                <button id="tab-daily-btn" class="tab-btn active" onclick="switchTab('daily')">
+                    <i class="fa-regular fa-calendar-days"></i> Daily View
+                </button>
+                <button id="tab-monthly-btn" class="tab-btn" onclick="switchTab('monthly')">
+                    <i class="fa-solid fa-chart-bar"></i> Monthly Summary
+                </button>
+                <button id="tab-hr-btn" class="tab-btn" onclick="switchTab('hr')">
+                    <i class="fa-solid fa-user-doctor"></i> Tuyển Dụng
+                </button>
+            </div>
+
+            <!-- ═══════════════════════════════════════════════════════════
+         ③ DAILY VIEW TAB
+    ════════════════════════════════════════════════════════════ -->
+            <div id="view-daily">
+
+                <!-- Filter Bar -->
+                <div class="px-5 py-4 bg-slate-50/50 border-b border-slate-100">
+                    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3 items-end">
+                        <div>
+                            <label
+                                class="block text-[11px] text-slate-400 font-semibold uppercase tracking-wide mb-1">📅
+                                Từ ngày</label>
+                            <input type="date" id="f-from"
+                                class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all">
+                        </div>
+                        <div>
+                            <label
+                                class="block text-[11px] text-slate-400 font-semibold uppercase tracking-wide mb-1">📅
+                                Đến ngày</label>
+                            <input type="date" id="f-to"
+                                class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all">
+                        </div>
+                        <div>
+                            <label
+                                class="block text-[11px] text-slate-400 font-semibold uppercase tracking-wide mb-1">🏷
+                                Brand</label>
+                            <select id="f-brand"
+                                class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all cursor-pointer">
+                                <option value="">Tất cả</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label
+                                class="block text-[11px] text-slate-400 font-semibold uppercase tracking-wide mb-1">🏬
+                                Store</label>
+                            <select id="f-store"
+                                class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all cursor-pointer">
+                                <option value="">Tất cả</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label
+                                class="block text-[11px] text-slate-400 font-semibold uppercase tracking-wide mb-1">👤
+                                Supervisor</label>
+                            <select id="f-sup"
+                                class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all cursor-pointer">
+                                <option value="">Tất cả</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label
+                                class="block text-[11px] text-slate-400 font-semibold uppercase tracking-wide mb-1">📌
+                                Status</label>
+                            <select id="f-status"
+                                class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-700 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all cursor-pointer">
+                                <option value="">Tất cả</option>
+                                <option>Active</option>
+                                <option>Off</option>
+                                <option>Pending</option>
+                                <option>Training</option>
+                                <option>Sampling</option>
+                                <option>Event</option>
+                            </select>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="resetFilters()"
+                                class="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-500 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 transition-all font-medium">↺
+                                Reset</button>
+                        </div>
+                    </div>
+                    <p id="filter-info" class="text-[11px] text-slate-400 mt-2"></p>
+                </div>
+
+                <!-- KPI Cards -->
+                <div class="grid grid-cols-2 md:grid-cols-4 border-b border-slate-100">
+                    <div class="kpi-card p-5 flex items-center gap-4 border-r border-slate-100">
+                        <div class="w-11 h-11 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                            <i class="fa-solid fa-store text-blue-500 text-lg"></i>
+                        </div>
+                        <div>
+                            <div id="kpi-stores" class="text-2xl font-bold text-slate-800">—</div>
+                            <div class="text-[11px] text-slate-400 font-semibold uppercase tracking-wide">Stores</div>
+                        </div>
+                    </div>
+                    <div class="kpi-card p-5 flex items-center gap-4 border-r border-slate-100 border-b md:border-b-0">
+                        <div class="w-11 h-11 bg-emerald-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                            <i class="fa-solid fa-briefcase text-emerald-500 text-lg"></i>
+                        </div>
+                        <div>
+                            <div id="kpi-projects" class="text-2xl font-bold text-slate-800">—</div>
+                            <div class="text-[11px] text-slate-400 font-semibold uppercase tracking-wide">Projects</div>
+                        </div>
+                    </div>
+                    <div class="kpi-card p-5 flex items-center gap-4 border-r border-slate-100">
+                        <div class="w-11 h-11 bg-violet-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                            <i class="fa-solid fa-users text-violet-500 text-lg"></i>
+                        </div>
+                        <div>
+                            <div id="kpi-pg" class="text-2xl font-bold text-slate-800">—</div>
+                            <div class="text-[11px] text-slate-400 font-semibold uppercase tracking-wide">Shifts (ca)
+                            </div>
+                        </div>
+                    </div>
+                    <div class="kpi-card p-5 flex items-center gap-4">
+                        <div class="w-11 h-11 bg-orange-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                            <i class="fa-solid fa-user-tie text-orange-500 text-lg"></i>
+                        </div>
+                        <div>
+                            <div id="kpi-sups" class="text-2xl font-bold text-slate-800">—</div>
+                            <div class="text-[11px] text-slate-400 font-semibold uppercase tracking-wide">Supervisors
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Store Summary + Working Time -->
+                <div class="grid grid-cols-1 md:grid-cols-2 divide-x divide-slate-100 border-b border-slate-100">
+                    <div class="p-5 border-b md:border-b-0">
+                        <h2 class="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+                            <i class="fa-solid fa-store text-blue-500"></i> Store Summary
+                        </h2>
+                        <div id="store-pills" class="flex flex-wrap gap-2">
+                            <div class="shimmer h-7 w-28 rounded-full"></div>
+                            <div class="shimmer h-7 w-24 rounded-full"></div>
+                            <div class="shimmer h-7 w-32 rounded-full"></div>
+                        </div>
+                    </div>
+                    <div class="p-5">
+                        <h2 class="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+                            <i class="fa-regular fa-clock text-blue-500"></i> Working Time
+                        </h2>
+                        <div id="working-time" class="space-y-1.5">
+                            <div class="shimmer h-5 w-48 rounded"></div>
+                            <div class="shimmer h-5 w-40 rounded"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Timeline -->
+                <div class="p-5 border-b border-slate-100">
+                    <div class="flex items-center justify-between flex-wrap gap-2 mb-4">
+                        <h2 class="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                            <i class="fa-solid fa-chart-gantt text-blue-500"></i>
+                            Timeline Ca Làm <span class="text-slate-400 text-xs font-normal">(08:00 → 21:00)</span>
+                        </h2>
+                        <span
+                            class="text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-1">
+                            ⚡ Ô trống = QC nên đến audit
+                        </span>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <div id="timeline" class="min-w-[640px]">
+                            <div class="shimmer h-10 rounded mb-2"></div>
+                            <div class="shimmer h-10 rounded mb-2"></div>
+                            <div class="shimmer h-10 rounded"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Detail Table -->
+                <div class="p-5">
+                    <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
+                        <h2 class="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                            <i class="fa-solid fa-table-list text-blue-500"></i> Chi Tiết Lịch Làm
+                        </h2>
+                        <span id="table-count" class="text-xs text-slate-400"></span>
+                    </div>
+                    <div class="overflow-x-auto border border-slate-100 rounded-xl">
+                        <table class="min-w-full text-sm">
+                            <thead>
+                                <tr class="bg-slate-50 border-b border-slate-100">
+                                    <th
+                                        class="text-left px-4 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
+                                        Ngày</th>
+                                    <th
+                                        class="text-left px-4 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                                        Store</th>
+                                    <th
+                                        class="text-left px-4 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                                        Brand</th>
+                                    <th
+                                        class="text-left px-4 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                                        Project</th>
+                                    <th
+                                        class="text-left px-4 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
+                                        Working Time</th>
+                                    <th
+                                        class="text-left px-4 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                                        Supervisor</th>
+                                    <th
+                                        class="text-left px-4 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                                        Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="detail-tbody" class="divide-y divide-slate-50"></tbody>
+                        </table>
+                    </div>
+                    <div class="flex items-center justify-between mt-3">
+                        <span id="page-info" class="text-xs text-slate-400"></span>
+                        <div id="pagination" class="flex gap-1 flex-wrap"></div>
+                    </div>
+                </div>
+
+            </div><!-- /view-daily -->
+
+            <!-- ═══════════════════════════════════════════════════════════
+         ④ MONTHLY SUMMARY TAB
+    ════════════════════════════════════════════════════════════ -->
+            <div id="view-monthly" class="hidden">
+
+                <!-- ── ZONE 1: TỔNG QUAN — dark header + inline KPIs ──── -->
+                <div class="bg-gradient-to-r from-slate-800 via-slate-800 to-slate-700 border-b border-slate-700">
+                    <!-- Month picker row -->
+                    <div class="px-5 pt-4 pb-3 flex flex-wrap items-center gap-4">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-regular fa-calendar text-white/50 text-sm"></i>
+                            <select id="month-selector"
+                                class="bg-white/10 border border-white/20 text-white rounded-lg px-3 py-1.5 text-sm cursor-pointer outline-none focus:ring-2 focus:ring-white/30 hover:bg-white/20 transition-colors">
+                            </select>
+                        </div>
+                        <!-- Inline KPI stats -->
+                        <div class="flex flex-wrap items-center gap-x-5 gap-y-2" id="monthly-quick-stats">
+                            <!-- filled by JS -->
+                        </div>
+                    </div>
+                    <!-- WD / WK breakdown bar -->
+                    <div class="px-5 pb-3 flex flex-wrap gap-x-6 gap-y-1" id="monthly-wd-wk-bar">
+                        <!-- filled by JS -->
+                    </div>
+                </div>
+
+                <!-- ── ZONE 2: PHÂN TÍCH — 2 panels side-by-side ──────── -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 border-b border-slate-100" style="min-height:360px">
+
+                    <!-- LEFT: Weekday Distribution -->
+                    <div class="p-5 border-b lg:border-b-0 lg:border-r border-slate-100 flex flex-col">
+                        <div class="flex items-center gap-2 mb-4">
+                            <i class="fa-solid fa-chart-column text-blue-500"></i>
+                            <h2 class="text-sm font-semibold text-slate-700">Phân Bổ Theo Ngày Trong Tuần</h2>
+                            <span
+                                class="text-[10px] font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 ml-auto">WD
+                                = T2–T6</span>
+                            <span
+                                class="text-[10px] font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">WK
+                                = T7–CN</span>
+                        </div>
+                        <div id="weekday-dist" class="overflow-x-auto flex-1">
+                            <div class="shimmer h-40 rounded"></div>
+                        </div>
+                    </div>
+
+                    <!-- RIGHT: Weekend Supervisor Coverage -->
+                    <div class="p-5 flex flex-col">
+                        <div class="flex items-center gap-2 mb-4">
+                            <i class="fa-solid fa-user-shield text-blue-500"></i>
+                            <h2 class="text-sm font-semibold text-slate-700">Supervisor Coverage Cuối Tuần</h2>
+                            <span class="text-[10px] text-slate-400 font-normal ml-1">⚠️ ≥ 5 stores = chú ý</span>
+                        </div>
+                        <div id="weekend-coverage" class="flex-1 overflow-y-auto" style="max-height:360px">
+                            <div class="shimmer h-32 rounded"></div>
+                        </div>
+                    </div>
+
+                </div><!-- /zone-2 -->
+
+                <!-- ── ZONE 3: CHI TIẾT — BA Status Grid full width ───── -->
+                <div class="p-5">
+                    <div class="flex items-center justify-between flex-wrap gap-2 mb-4">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-table-cells text-blue-500"></i>
+                            <h2 class="text-sm font-semibold text-slate-700">Trạng Thái BA Theo Ngày</h2>
+                            <span class="text-xs text-slate-400 font-normal">(số ca Active mỗi store/ngày)</span>
+                        </div>
+                        <div class="flex items-center gap-3 text-[10px] text-slate-500">
+                            <span class="flex items-center gap-1.5"><span
+                                    class="inline-block w-3.5 h-3.5 rounded bg-slate-100 border border-slate-200"></span>Không
+                                có</span>
+                            <span class="flex items-center gap-1.5"><span
+                                    class="inline-block w-3.5 h-3.5 rounded bg-blue-200"></span>1 ca</span>
+                            <span class="flex items-center gap-1.5"><span
+                                    class="inline-block w-3.5 h-3.5 rounded bg-blue-400"></span>2 ca</span>
+                            <span class="flex items-center gap-1.5"><span
+                                    class="inline-block w-3.5 h-3.5 rounded bg-blue-700"></span>3+</span>
+                            <span class="flex items-center gap-1.5"><span
+                                    class="inline-block w-3.5 h-3.5 rounded bg-amber-300 border border-amber-400"></span>Cuối
+                                tuần</span>
+                        </div>
+                    </div>
+                    <div id="ba-grid">
+                        <div class="shimmer h-48 rounded"></div>
+                    </div>
+                </div><!-- /zone-3 -->
+
+            </div><!-- /view-monthly -->
+
+            <!-- ═══════════════════════════════════════════════════════════
+         ④ HR STATUS TAB
+    ════════════════════════════════════════════════════════════ -->
+            <div id="view-hr" class="hidden">
+                <!-- HR KPI Cards -->
+                <div class="grid grid-cols-2 md:grid-cols-4 border-b border-slate-100">
+                    <div class="kpi-card p-5 flex items-center gap-4 border-r border-slate-100">
+                        <div class="w-11 h-11 bg-rose-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                            <i class="fa-solid fa-shop-slash text-rose-500 text-lg"></i>
+                        </div>
+                        <div>
+                            <div id="hr-kpi-total" class="text-2xl font-bold text-slate-800">—</div>
+                            <div class="text-[11px] text-slate-400 font-semibold uppercase tracking-wide">Total Vacant
+                            </div>
+                        </div>
+                    </div>
+                    <div class="kpi-card p-5 flex items-center gap-4 border-r border-slate-100">
+                        <div class="w-11 h-11 bg-amber-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                            <i class="fa-solid fa-magnifying-glass text-amber-500 text-lg"></i>
+                        </div>
+                        <div>
+                            <div id="hr-kpi-sourcing" class="text-2xl font-bold text-slate-800">—</div>
+                            <div class="text-[11px] text-slate-400 font-semibold uppercase tracking-wide">Sourcing</div>
+                        </div>
+                    </div>
+                    <div class="kpi-card p-5 flex items-center gap-4 border-r border-slate-100">
+                        <div class="w-11 h-11 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                            <i class="fa-solid fa-comments text-blue-500 text-lg"></i>
+                        </div>
+                        <div>
+                            <div id="hr-kpi-interviewing" class="text-2xl font-bold text-slate-800">—</div>
+                            <div class="text-[11px] text-slate-400 font-semibold uppercase tracking-wide">Interviewing
+                            </div>
+                        </div>
+                    </div>
+                    <div class="kpi-card p-5 flex items-center gap-4">
+                        <div class="w-11 h-11 bg-emerald-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                            <i class="fa-solid fa-handshake text-emerald-500 text-lg"></i>
+                        </div>
+                        <div>
+                            <div id="hr-kpi-offering" class="text-2xl font-bold text-slate-800">—</div>
+                            <div class="text-[11px] text-slate-400 font-semibold uppercase tracking-wide">Offering</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- HR Data Table -->
+                <div class="p-5">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                            <i class="fa-solid fa-list-check text-blue-500"></i> Tiến Độ Tuyển Dụng
+                        </h2>
+                        <button onclick="loadHRData(true)"
+                            class="text-xs text-blue-600 hover:underline px-2 py-1 rounded border border-blue-100 hover:bg-blue-50 transition-colors">
+                            <i class="fa-solid fa-rotate-right mr-1"></i> Làm mới
+                        </button>
+                    </div>
+                    <div class="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                        <div style="overflow-x:auto;">
+                            <table class="w-full border-collapse text-sm">
+                                <thead>
+                                    <tr class="bg-slate-50 border-b border-slate-200">
+                                        <th
+                                            class="px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
+                                            Store / Điểm bán</th>
+                                        <th
+                                            class="px-3 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                                            Project</th>
+                                        <th
+                                            class="px-3 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                                            Supervisor</th>
+                                        <th
+                                            class="px-3 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                                            Tình trạng shop</th>
+                                        <th
+                                            class="px-3 py-3 text-left text-[11px] font-semibold text-rose-500 uppercase tracking-wide whitespace-nowrap">
+                                            Ngày trống BA</th>
+                                        <th
+                                            class="px-3 py-3 text-left text-[11px] font-semibold text-blue-600 uppercase tracking-wide">
+                                            Target Week</th>
+                                        <th
+                                            class="px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                                            Tiến độ HR</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="hr-tbody" class="divide-y divide-slate-100">
+                                    <tr>
+                                        <td colspan="7" class="p-8 text-center text-slate-400 text-sm">Đang tải dữ liệu
+                                            tuyển dụng...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div><!-- /view-hr -->
+
+            <!-- Footer -->
+            <div class="px-5 py-3 bg-slate-50 border-t border-slate-100 text-center">
+                <p class="text-xs text-slate-400">
+                    Field Operation Dashboard · Nguồn: <span id="footer-src">Khởi động...</span>
+                </p>
+            </div>
+
+        </div>
+    </div><!-- /card /wrapper -->
+
+    <!-- ═══════════════════════════════════════════════════════════
+     JAVASCRIPT
+════════════════════════════════════════════════════════════ -->
+    <script>
+        // ╔══════════════════════════════════════════════════════════════╗
+        // ║  ⚙️  CONFIGURATION                                            ║
+        // ╚══════════════════════════════════════════════════════════════╝
+        const CONFIG = {
+            SHEET_ID: '',
+            SHEET_NAME: 'master_data',
+            APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycby6KkWax3dC6o7GzlQzH-z8Wdobre-QUeu6znyYDovSuFGIPHpvXTTPeRb3-0gSCQE/exec',
+        };
+        let currentUser = null;
+
+        // ╔══════════════════════════════════════════════════════════════╗
+        // ║  🔐  AUTH LOGIC                                               ║
+        // ╚══════════════════════════════════════════════════════════════╝
+        async function sha256(message) {
+            const msgBuffer = new TextEncoder().encode(message);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        async function doLogin() {
+            const u = document.getElementById('login-user').value.trim();
+            const p = document.getElementById('login-pass').value;
+            const err = document.getElementById('login-error');
+            const btn = document.getElementById('btn-login');
+            if (!u || !p) { err.textContent = 'Vui lòng nhập đủ thông tin'; err.classList.remove('hidden'); return; }
+
+            err.classList.add('hidden');
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Đang xử lý...';
+            btn.disabled = true;
+
+            try {
+                // Gửi password trực tiếp (vì lưu trong sheet là plain text)
+                const url = `${CONFIG.APPS_SCRIPT_URL}?action=login&user=${encodeURIComponent(u)}&pass=${encodeURIComponent(p)}`;
+                const res = await fetch(url);
+                const json = await res.json();
+
+                if (json.error) {
+                    err.textContent = json.message;
+                    err.classList.remove('hidden');
+                } else if (json.success) {
+                    currentUser = { username: u, role: json.role, displayName: json.displayName, scope: json.scope };
+                    localStorage.setItem('fod_user', JSON.stringify(currentUser));
+                    document.getElementById('login-overlay').classList.add('hidden');
+                    updateUserBadge();
+                    loadData(); // proceed to load data
+                }
+            } catch (e) {
+                err.textContent = 'Lỗi kết nối server';
+                err.classList.remove('hidden');
+            } finally {
+                btn.innerHTML = 'Đăng Nhập';
+                btn.disabled = false;
+            }
+        }
+
+        function doLogout() {
+            localStorage.removeItem('fod_user');
+            currentUser = null;
+            document.getElementById('login-overlay').classList.remove('hidden');
+            document.getElementById('login-user').value = '';
+            document.getElementById('login-pass').value = '';
+            updateUserBadge();
+        }
+
+        function updateUserBadge() {
+            const badge = document.getElementById('user-badge');
+            const uName = document.getElementById('user-name');
+            const uRole = document.getElementById('user-role');
+            if (currentUser) {
+                if (badge) { badge.classList.remove('hidden'); badge.classList.add('flex'); }
+                if (uName) uName.textContent = currentUser.displayName;
+                if (uRole) uRole.textContent = currentUser.role;
+            } else {
+                if (badge) { badge.classList.add('hidden'); badge.classList.remove('flex'); }
+            }
+        }
+
+        function checkAuth() {
+            const saved = localStorage.getItem('fod_user');
+            if (saved) {
+                try {
+                    currentUser = JSON.parse(saved);
+                    document.getElementById('login-overlay').classList.add('hidden');
+                    updateUserBadge();
+                    loadData();
+                } catch (e) {
+                    document.getElementById('login-overlay').classList.remove('hidden');
+                }
+            } else {
+                document.getElementById('login-overlay').classList.remove('hidden');
+            }
+        }
+
+        // ╔══════════════════════════════════════════════════════════════╗
+        // ║  📋  COLUMN MAPPING — khớp tên cột trong Google Sheet        ║
+        // ╚══════════════════════════════════════════════════════════════╝
+        const COL = {
+            date: 'Date',
+            brand: 'Brand',
+            project: 'Project',
+            store: 'Store Name',    // ← Real column name in Sheet
+            storeCode: 'Store Code',
+            supervisor: 'Sup',           // ← Real column name in Sheet
+            workingTime: 'Working Time',
+            status: 'Status',
+        };
+
+        // ╔══════════════════════════════════════════════════════════════╗
+        // ║  🎨  BRAND COLORS                                             ║
+        // ╚══════════════════════════════════════════════════════════════╝
+        const BRANDS = {
+            'BA INLINE': { tl: '#7c3aed', dot: '#8b5cf6', chip: 'chip-default' },
+            'MAGGI': { tl: '#dc2626', dot: '#ef4444', chip: 'chip-maggi' },
+            'NESCAFÉ': { tl: '#854d0e', dot: '#ca8a04', chip: 'chip-vinda' },
+            'P&G': { tl: '#1d4ed8', dot: '#3b82f6', chip: 'chip-pg' },
+            // Legacy/demo brands
+            'Maggi': { tl: '#dc2626', dot: '#ef4444', chip: 'chip-maggi' },
+            'Nestlé': { tl: '#0891b2', dot: '#06b6d4', chip: 'chip-nestle' },
+            'Nestle': { tl: '#0891b2', dot: '#06b6d4', chip: 'chip-nestle' },
+            'Vinda': { tl: '#ea580c', dot: '#f97316', chip: 'chip-vinda' },
+            'Trống BA': { tl: '#e11d48', dot: '#f43f5e', chip: 'chip-vacant' },
+        };
+        function brand(b) { return BRANDS[b] || { tl: '#64748b', dot: '#94a3b8', chip: 'chip-default' }; }
+
+        // ╔══════════════════════════════════════════════════════════════╗
+        // ║  📦  DEMO DATA                                                ║
+        // ╚══════════════════════════════════════════════════════════════╝
+        const DEMO = [
+            { date: '2026-07-17', brand: 'P&G', project: 'Gillette Summer', store: 'Giga Mall', supervisor: 'CHIEN', workingTime: '08-13', status: 'Active' },
+            { date: '2026-07-17', brand: 'P&G', project: 'Gillette Summer', store: 'Giga Mall', supervisor: 'CHIEN', workingTime: '15-21', status: 'Active' },
+            { date: '2026-07-17', brand: 'MAGGI', project: 'Maggi Mì Gói Q3', store: 'Giga Mall', supervisor: 'KIET', workingTime: '08-14', status: 'Active' },
+            { date: '2026-07-17', brand: 'NESCAFÉ', project: 'Milo Back to School', store: 'Giga Mall', supervisor: 'HOA', workingTime: '10-18', status: 'Active' },
+            { date: '2026-07-17', brand: 'BA INLINE', project: 'Aeon Activation', store: 'Aeon Bình Tân', supervisor: 'THAO', workingTime: '08-21', status: 'Active' },
+            { date: '2026-07-17', brand: 'P&G', project: 'Ariel Matic', store: 'Aeon Bình Tân', supervisor: 'CHIEN', workingTime: '09-17', status: 'Active' },
+            { date: '2026-07-17', brand: 'MAGGI', project: 'Maggi Gia Vị Tết', store: 'Aeon Bình Tân', supervisor: 'KIET', workingTime: '10-16', status: 'Training' },
+            { date: '2026-07-17', brand: 'P&G', project: 'Tide + Downy', store: 'Winmart Trúc Khê', supervisor: 'KIEM', workingTime: '08-13', status: 'Active' },
+            { date: '2026-07-17', brand: 'NESCAFÉ', project: 'Nescafé Promo', store: 'Winmart Trúc Khê', supervisor: 'HOA', workingTime: '13-21', status: 'Active' },
+            { date: '2026-07-17', brand: 'MAGGI', project: 'Maggi Mì Gói Q3', store: 'Winmart Trúc Khê', supervisor: 'KIET', workingTime: '08-14', status: 'Pending' },
+            { date: '2026-07-18', brand: 'P&G', project: 'Pampers Drive', store: 'Giga Mall', supervisor: 'CHIEN', workingTime: '08-21', status: 'Active' },
+            { date: '2026-07-18', brand: 'MAGGI', project: 'Maggi Mì Gói Q3', store: 'Aeon Bình Tân', supervisor: 'KIET', workingTime: '15-21', status: 'Active' },
+            { date: '2026-07-18', brand: 'NESCAFÉ', project: 'KitKat Display', store: 'Winmart Trúc Khê', supervisor: 'HOA', workingTime: '08-16', status: 'Active' },
+            { date: '2026-07-19', brand: 'BA INLINE', project: 'Aeon Activation', store: 'Aeon Bình Tân', supervisor: 'THAO', workingTime: '09-21', status: 'Active' },
+            { date: '2026-07-19', brand: 'P&G', project: 'Head & Shoulders', store: 'Giga Mall', supervisor: 'CHIEN', workingTime: '08-14', status: 'Active' },
+            { date: '2026-07-20', brand: 'MAGGI', project: 'Maggi Gia Vị Tết', store: 'Giga Mall', supervisor: 'KIET', workingTime: '08-21', status: 'Active' },
+            { date: '2026-07-20', brand: 'P&G', project: 'Ariel Matic', store: 'Aeon Bình Tân', supervisor: 'CHIEN', workingTime: '09-17', status: 'Active' },
+        ];
+
+        // ╔══════════════════════════════════════════════════════════════╗
+        // ║  📊  STATE                                                    ║
+        // ╚══════════════════════════════════════════════════════════════╝
+        let allData = [];
+        let filtered = [];
+        let page = 1;
+        let isDemo = false;
+        let activeTab = 'daily';
+        let selMonth = '';     // "YYYY-MM"
+        const PG_SIZE = 15;
+        const HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
+        const WARN_SUPS = 5;     // Ngưỡng cảnh báo số stores/sup/ngày
+
+        // ═══ Day-of-week helpers ══════════════════════════════════════
+        const DOW_VN = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+        const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0]; // T2 → CN
+
+        /** Get JS getDay() from YYYY-MM-DD (0=Sun,6=Sat) */
+        function getDOW(dateStr) {
+            if (!dateStr) return -1;
+            const p = dateStr.split('-');
+            if (p.length === 3) return new Date(+p[0], +p[1] - 1, +p[2]).getDay();
+            return -1;
+        }
+
+        /** T7 (6) or CN (0) */
+        const isWK = d => { const w = getDOW(d); return w === 0 || w === 6; };
+        const isWD = d => { const w = getDOW(d); return w >= 1 && w <= 5; };
+
+        // ═══ Time helpers ═════════════════════════════════════════════
+        const todayISO = () => new Date().toISOString().slice(0, 10);
+
+        /**
+         * Parse working time → [{start,end}]
+         * Handles: "08-13", "08:00-13:00", "09:00-12:00; 14:00-21:00", comma-separated
+         */
+        function parseSlots(str) {
+            if (!str) return [];
+            return String(str)
+                .split(/[;,]/)
+                .map(s => {
+                    const c = s.trim().replace(/\s/g, '').replace(/h/gi, '');
+                    const d = c.indexOf('-', 1);
+                    if (d < 0) return null;
+                    const a = parseInt(c.slice(0, d).split(':')[0], 10);
+                    const b = parseInt(c.slice(d + 1).split(':')[0], 10);
+                    return (!isNaN(a) && !isNaN(b) && a < b) ? { start: a, end: b } : null;
+                })
+                .filter(Boolean);
+        }
+
+        const covered = (slots, h) => slots.some(s => h >= s.start && h < s.end);
+
+        function normDate(v) {
+            if (!v) return '';
+            const s = String(v).trim();
+            if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+            const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+            if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+            const dt = new Date(s);
+            return isNaN(dt) ? s : dt.toISOString().slice(0, 10);
+        }
+
+        function getISOWeek(dateStr) {
+            const d = new Date(dateStr);
+            d.setHours(0, 0, 0, 0);
+            d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+            const yearStart = new Date(d.getFullYear(), 0, 1);
+            return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+        }
+
+        const uniq = arr => [...new Set(arr.filter(Boolean))].sort();
+
+        // ╔══════════════════════════════════════════════════════════════╗
+        // ║  🌐  DATA LOADING                                             ║
+        // ╚══════════════════════════════════════════════════════════════╝
+        async function loadData() {
+            showLoading(true, 'Đang tải dữ liệu...');
+            let loadedSrc = '';
+
+            if (CONFIG.APPS_SCRIPT_URL) {
+                try {
+                    const url = `${CONFIG.APPS_SCRIPT_URL}?action=getData&sheet=${encodeURIComponent(CONFIG.SHEET_NAME)}`;
+                    const res = await fetch(url);
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const json = await res.json();
+                    if (json.error) throw new Error(json.message);
+                    allData = normalizeRows(json);
+                    isDemo = false;
+                    loadedSrc = 'Apps Script';
+                } catch (e) { console.warn('[Apps Script]', e.message); }
+            }
+
+            if (!loadedSrc && CONFIG.SHEET_ID && typeof Papa !== 'undefined') {
+                try {
+                    const url = `https://docs.google.com/spreadsheets/d/${CONFIG.SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(CONFIG.SHEET_NAME)}`;
+                    await new Promise((resolve, reject) => {
+                        Papa.parse(url, {
+                            download: true, header: true, skipEmptyLines: true,
+                            complete(r) { allData = normalizeRows(r.data); isDemo = false; resolve(); },
+                            error(e) { reject(e); }
+                        });
+                    });
+                    loadedSrc = 'Google Sheets CSV';
+                } catch (e) { console.warn('[CSV]', e.message); }
+            }
+
+            if (!loadedSrc) {
+                allData = DEMO;
+                isDemo = true;
+                loadedSrc = 'Demo Data';
+            }
+
+            // Tích hợp dữ liệu HR
+            await loadHRData(true, true);
+            injectVacantStores();
+
+            onLoaded(loadedSrc);
+        }
+
+        function normalizeRows(rows) {
+            if (!Array.isArray(rows) || rows.length === 0) return [];
+            if (Array.isArray(rows[0])) {
+                const headers = rows[0];
+                rows = rows.slice(1).map(row => {
+                    const obj = {};
+                    headers.forEach((h, i) => { obj[h] = row[i] !== undefined ? String(row[i]) : ''; });
+                    return obj;
+                });
+            }
+            return rows.map(r => {
+                const get = (...keys) => {
+                    for (const k of keys) { if (r[k] !== undefined && r[k] !== '') return String(r[k]).trim(); }
+                    return '';
+                };
+                return {
+                    date: normDate(get('Date', 'date')),
+                    brand: get('Brand', 'brand'),
+                    project: get('Project', 'project'),
+                    region: get('Region', 'region', 'Khu vực', 'Khu Vực'),
+                    store: get('Store Name', 'Store', 'store', 'StoreName'),
+                    storeCode: get('Store Code', 'StoreCode', 'store_code'),
+                    supervisor: get('Sup', 'Supervisor', 'supervisor'),
+                    workingTime: get('Working Time', 'WorkingTime', 'working_time'),
+                    status: get('Status', 'status'),
+                };
+            }).filter(r => r.date && r.brand && r.store);
+        }
+
+        function onLoaded(src) {
+            document.getElementById('footer-src').textContent = src;
+            document.getElementById('last-updated').textContent =
+                'Cập nhật ' + new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+            const badge = document.getElementById('demo-badge');
+            if (badge) badge.classList.toggle('hidden', !isDemo);
+            initFilters();
+            initMonthSelector();
+            applyRoleRules();
+            applyFilters();
+            if (activeTab === 'monthly') renderMonthlyAll();
+            showLoading(false);
+        }
+
+        function applyRoleRules() {
+            if (!currentUser) return;
+
+            // Hide Monthly & HR tab for BA
+            const tabMonthly = document.getElementById('tab-monthly-btn');
+            const tabHR = document.getElementById('tab-hr-btn');
+            const btnPdf = document.getElementById('btn-export-pdf');
+
+            if (currentUser.role === 'ba') {
+                if (tabMonthly) tabMonthly.style.display = 'none';
+                if (tabHR) tabHR.style.display = 'none';
+                if (btnPdf) btnPdf.style.display = 'none';
+                if (activeTab === 'monthly' || activeTab === 'hr') switchTab('daily');
+            } else {
+                if (tabMonthly) tabMonthly.style.display = '';
+                if (tabHR) tabHR.style.display = '';
+                if (btnPdf) btnPdf.style.display = '';
+            }
+
+            // Lock filters UI
+            const fSup = document.getElementById('f-sup');
+            const fStore = document.getElementById('f-store');
+
+            if (currentUser.role === 'sup') {
+                if (fSup) { fSup.value = currentUser.displayName; fSup.disabled = true; fSup.classList.add('bg-slate-100'); }
+            } else {
+                if (fSup) { fSup.disabled = false; fSup.classList.remove('bg-slate-100'); }
+            }
+
+            if (currentUser.role === 'ba') {
+                if (fStore) { fStore.value = currentUser.scope; fStore.disabled = true; fStore.classList.add('bg-slate-100'); }
+            } else {
+                if (fStore) { fStore.disabled = false; fStore.classList.remove('bg-slate-100'); }
+            }
+        }
+
+        // ╔══════════════════════════════════════════════════════════════╗
+        // ║  🔽  DAILY FILTER LOGIC                                       ║
+        // ╚══════════════════════════════════════════════════════════════╝
+        function initFilters() {
+            const today = todayISO();
+            document.getElementById('f-from').value = today;
+            document.getElementById('f-to').value = today;
+            fillSelect('f-brand', uniq(allData.map(r => r.brand)));
+            fillSelect('f-store', uniq(allData.map(r => r.store)));
+            fillSelect('f-sup', uniq(allData.map(r => r.supervisor)));
+        }
+
+        function fillSelect(id, opts) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const cur = el.value;
+            el.innerHTML = '<option value="">Tất cả</option>' +
+                opts.map(o => `<option value="${o}"${o === cur ? ' selected' : ''}>${o}</option>`).join('');
+        }
+
+        function getF() {
+            return {
+                from: document.getElementById('f-from').value,
+                to: document.getElementById('f-to').value,
+                brand: document.getElementById('f-brand').value,
+                store: document.getElementById('f-store').value,
+                sup: document.getElementById('f-sup').value,
+                stat: document.getElementById('f-status').value,
+            };
+        }
+
+        function applyFilters() {
+            const f = getF();
+
+            // RBAC Locks
+            if (currentUser) {
+                if (currentUser.role === 'sup') f.sup = currentUser.displayName;
+                if (currentUser.role === 'ba') f.store = currentUser.scope;
+            }
+
+            filtered = allData.filter(r => {
+                if (f.from && r.date < f.from) return false;
+                if (f.to && r.date > f.to) return false;
+                if (f.brand && r.brand !== f.brand) return false;
+                if (f.store && r.store !== f.store) return false;
+                if (f.sup && r.supervisor !== f.sup) return false;
+                if (f.stat && r.status !== f.stat) return false;
+                return true;
+            });
+            page = 1;
+            renderAll();
+        }
+
+        function resetFilters() {
+            const today = todayISO();
+            ['f-from', 'f-to'].forEach(id => document.getElementById(id).value = today);
+            ['f-brand', 'f-store', 'f-sup', 'f-status'].forEach(id => document.getElementById(id).value = '');
+            applyFilters();
+        }
+
+        // ╔══════════════════════════════════════════════════════════════╗
+        // ║  🗂️  TAB SWITCHING                                            ║
+        // ╚══════════════════════════════════════════════════════════════╝
+        function switchTab(tab) {
+            activeTab = tab;
+            document.getElementById('view-daily').classList.toggle('hidden', tab !== 'daily');
+            document.getElementById('view-monthly').classList.toggle('hidden', tab !== 'monthly');
+            document.getElementById('view-hr').classList.toggle('hidden', tab !== 'hr');
+
+            document.getElementById('tab-daily-btn').classList.toggle('active', tab === 'daily');
+            document.getElementById('tab-monthly-btn').classList.toggle('active', tab === 'monthly');
+            document.getElementById('tab-hr-btn').classList.toggle('active', tab === 'hr');
+
+            if (tab === 'monthly' && allData.length > 0) renderMonthlyAll();
+            if (tab === 'hr') loadHRData();
+        }
+
+        // ╔══════════════════════════════════════════════════════════════╗
+        // ║  🎨  RENDER ALL (DAILY)                                       ║
+        // ╚══════════════════════════════════════════════════════════════╝
+        function renderAll() {
+            renderKPI();
+            renderStorePills();
+            renderWorkingTime();
+            renderTimeline();
+            renderTable();
+            renderFilterInfo();
+        }
+
+        // ── KPI cards ──────────────────────────────────────────────────
+        function renderKPI() {
+            countUp('kpi-stores', uniq(filtered.map(r => r.store)).length);
+            countUp('kpi-projects', uniq(filtered.map(r => r.project)).length);
+            countUp('kpi-pg', filtered.length);
+            countUp('kpi-sups', uniq(filtered.map(r => r.supervisor)).length);
+        }
+
+        function countUp(id, to) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const from = parseInt(el.textContent) || 0;
+            const dur = 600; const t0 = performance.now();
+            const step = now => {
+                const p = Math.min((now - t0) / dur, 1);
+                el.textContent = Math.round(from + (to - from) * (1 - Math.pow(1 - p, 3)));
+                if (p < 1) requestAnimationFrame(step);
+            };
+            requestAnimationFrame(step);
+        }
+
+        // ── Store pills ────────────────────────────────────────────────
+        function renderStorePills() {
+            const el = document.getElementById('store-pills');
+            if (!el) return;
+            const counts = {};
+            filtered.forEach(r => { counts[r.store] = (counts[r.store] || 0) + 1; });
+            const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+            if (!sorted.length) { el.innerHTML = '<span class="text-xs text-slate-400">Không có dữ liệu</span>'; return; }
+            const cur = getF().store;
+            el.innerHTML = sorted.map(([s, c]) => `
+        <button data-store-filter="${s.replace(/"/g, '&quot;')}"
+            class="store-pill inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all cursor-pointer
+                   ${cur === s ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50'}">
+            ${s}
+            <span class="${cur === s ? 'bg-blue-600 text-white' : 'bg-blue-100 text-blue-700'} px-1.5 py-0.5 rounded-full text-[10px] font-bold">${c}</span>
+        </button>`).join('');
+        }
+
+        // ── Working Time ───────────────────────────────────────────────
+        function renderWorkingTime() {
+            const el = document.getElementById('working-time');
+            if (!el) return;
+            const byBrand = {};
+            filtered.forEach(r => { if (!byBrand[r.brand]) byBrand[r.brand] = new Set(); if (r.workingTime) byBrand[r.brand].add(r.workingTime); });
+            const brands = Object.keys(byBrand);
+            if (!brands.length) { el.innerHTML = '<span class="text-xs text-slate-400">Không có dữ liệu</span>'; return; }
+            el.innerHTML = brands.map(b => {
+                const c = brand(b);
+                const slots = [...byBrand[b]].sort().join(' · ');
+                return `<div class="flex items-center gap-2 py-0.5">
+            <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" style="background:${c.dot}"></span>
+            <span class="text-xs font-semibold text-slate-700 w-20 flex-shrink-0">${b}</span>
+            <span class="text-xs text-slate-400 font-mono">${slots || '—'}</span>
+        </div>`;
+            }).join('');
+        }
+
+        // ── Timeline ───────────────────────────────────────────────────
+        function renderTimeline() {
+            const el = document.getElementById('timeline');
+            if (!el) return;
+            const byBrand = {};
+            filtered.forEach(r => { if (!byBrand[r.brand]) byBrand[r.brand] = []; byBrand[r.brand].push(r); });
+            const brands = Object.keys(byBrand);
+            if (!brands.length) { el.innerHTML = '<div class="text-center py-10 text-slate-400 text-sm">📭 Không có dữ liệu</div>'; return; }
+            const hdr = HOURS.map(h => `<div class="text-center text-xs font-bold text-slate-500 py-2.5 border-r border-slate-200 last:border-r-0">${h}</div>`).join('');
+            const rows = brands.map(b => {
+                const rs = byBrand[b]; const c = brand(b);
+                const slots = rs.flatMap(r => parseSlots(r.workingTime));
+                const storeList = uniq(rs.map(r => r.store)).join(', ');
+                const cells = HOURS.map(h => {
+                    const on = covered(slots, h);
+                    return `<div class="border-r border-slate-100 last:border-r-0 p-1">
+                ${on ? `<div class="h-8 rounded" style="background:${c.tl};opacity:.85" title="${b}: ${h}:00–${h + 1}:00"></div>` : '<div class="h-8"></div>'}
+            </div>`;
+                }).join('');
+                return `<div class="tl-grid border-b border-slate-100 last:border-b-0 hover:bg-blue-50/30 transition-colors items-center group" title="${b} → ${storeList}">
+            <div class="border-r border-slate-200 px-3 py-1 flex items-center gap-2 h-full">
+                <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" style="background:${c.dot}"></span>
+                <span class="text-xs font-semibold text-slate-700 truncate">${b}</span>
+                <span class="ml-auto text-[10px] text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity">${rs.length}ca</span>
+            </div>
+            ${cells}
+        </div>`;
+            }).join('');
+            el.innerHTML = `<div class="border border-slate-200 rounded-xl overflow-hidden">
+        <div class="tl-grid bg-slate-100 border-b border-slate-200">
+            <div class="border-r border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-500">Brand</div>${hdr}
+        </div>${rows}
+    </div>
+    <p class="text-[10px] text-slate-400 mt-2">⚡ Ô màu xám = không có PG → QC nên đến kiểm tra trong khung giờ đó</p>`;
+        }
+
+        // ── Detail Table ───────────────────────────────────────────────
+        function renderTable() {
+            const tbody = document.getElementById('detail-tbody');
+            const countEl = document.getElementById('table-count');
+            if (!tbody) return;
+            const total = filtered.length;
+            const s = (page - 1) * PG_SIZE;
+            const rows = filtered.slice(s, s + PG_SIZE);
+            if (!rows.length) {
+                tbody.innerHTML = `<tr><td colspan="7" class="px-4 py-10 text-center text-slate-400 text-sm">Không có dữ liệu</td></tr>`;
+                document.getElementById('pagination').innerHTML = '';
+                if (countEl) countEl.textContent = '';
+                return;
+            }
+            tbody.innerHTML = rows.map(r => {
+                const c = brand(r.brand);
+
+                let statBadge = `<span class="px-2 py-0.5 text-xs font-semibold rounded-full badge-${(r.status || 'off').toLowerCase().replace(/\s+/g, '-')}">${r.status || '—'}</span>`;
+                if ((r.status || '').toLowerCase() === 'trống ba') {
+                    statBadge = `<span class="px-2 py-0.5 text-xs font-bold rounded-full bg-rose-500 text-white border border-rose-600 shadow-sm animate-[pulse_2s_ease-in-out_infinite]">Trống BA</span>`;
+                }
+
+                return `<tr class="hover:bg-blue-50/30 transition-colors">
+            <td class="px-4 py-2.5 text-xs text-slate-400 font-mono whitespace-nowrap">${r.date}</td>
+            <td class="px-4 py-2.5 text-sm font-medium text-slate-800">${r.store}</td>
+            <td class="px-4 py-2.5"><span class="px-2 py-0.5 text-xs font-semibold rounded-full ${c.chip}">${r.brand}</span></td>
+            <td class="px-4 py-2.5 text-sm text-slate-600 max-w-[180px] truncate" title="${r.project}">${r.project}</td>
+            <td class="px-4 py-2.5 text-sm font-mono text-slate-500 whitespace-nowrap">${r.workingTime || '—'}</td>
+            <td class="px-4 py-2.5 text-sm text-slate-600">${r.supervisor}</td>
+            <td class="px-4 py-2.5">${statBadge}</td>
+        </tr>`;
+            }).join('');
+            if (countEl) countEl.textContent = `${s + 1}–${Math.min(s + PG_SIZE, total)} / ${total} bản ghi`;
+            renderPagination(total);
+        }
+
+        function renderPagination(total) {
+            const pg = document.getElementById('pagination');
+            const inf = document.getElementById('page-info');
+            if (!pg) return;
+            const pages = Math.ceil(total / PG_SIZE);
+            if (pages <= 1) { pg.innerHTML = ''; if (inf) inf.textContent = ''; return; }
+            if (inf) inf.textContent = `Trang ${page} / ${pages}`;
+            const btns = [];
+            if (page > 1) btns.push(btn('‹', page - 1));
+            for (let p = Math.max(1, page - 2); p <= Math.min(pages, page + 2); p++) btns.push(btn(p, p, p === page));
+            if (page < pages) btns.push(btn('›', page + 1));
+            pg.innerHTML = btns.join('');
+        }
+
+        function btn(label, p, active = false) {
+            return `<button class="page-btn ${active ? 'pg-active' : ''}" onclick="goPage(${p})">${label}</button>`;
+        }
+
+        function goPage(p) {
+            page = p;
+            renderTable();
+            document.getElementById('detail-tbody')?.closest('.p-5')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        function renderFilterInfo() {
+            const el = document.getElementById('filter-info');
+            if (el) el.textContent = filtered.length
+                ? `Hiển thị ${filtered.length} / ${allData.length} bản ghi`
+                : `Không tìm thấy bản ghi nào trong ${allData.length} dòng`;
+        }
+
+        // ╔══════════════════════════════════════════════════════════════╗
+        // ║  📊  MONTHLY VIEW — CORE                                      ║
+        // ╚══════════════════════════════════════════════════════════════╝
+
+        /** Get all months present in data → ["2026-07", ...] */
+        function getMonthsInData() {
+            const s = new Set();
+            allData.forEach(r => { if (r.date) s.add(r.date.slice(0, 7)); });
+            return [...s].sort();
+        }
+
+        function initMonthSelector() {
+            const sel = document.getElementById('month-selector');
+            if (!sel) return;
+            const months = getMonthsInData();
+            if (!months.length) return;
+            // Default to last month (most recent) or current
+            const cur = todayISO().slice(0, 7);
+            const def = months.includes(cur) ? cur : months[months.length - 1];
+            sel.innerHTML = months.map(m => {
+                const [y, mo] = m.split('-');
+                return `<option value="${m}" ${m === def ? 'selected' : ''}>${'Tháng ' + parseInt(mo) + '/' + y}</option>`;
+            }).join('');
+            selMonth = sel.value;
+            sel.addEventListener('change', () => { selMonth = sel.value; renderMonthlyAll(); });
+        }
+
+        /** Get all data rows for the selected month */
+        function getMonthData() {
+            return allData.filter(r => r.date && r.date.slice(0, 7) === selMonth);
+        }
+
+        function renderMonthlyAll() {
+            if (!selMonth) return;
+            const mData = getMonthData();
+            renderMonthlyKPIs(mData);
+            renderBAGrid(mData);
+            renderWeekdayDist(mData);
+            renderWeekendCoverage(mData);
+        }
+
+        // ── Monthly KPIs — inline in dark header ───────────────────────
+        function renderMonthlyKPIs(mData) {
+            const qs = document.getElementById('monthly-quick-stats');
+            const wb = document.getElementById('monthly-wd-wk-bar');
+            if (!qs) return;
+
+            const active = mData.filter(r => r.status === 'Active');
+            const stores = uniq(active.map(r => r.store)).length;
+            const shifts = active.length;
+            const wdays = uniq(active.map(r => r.date)).length;
+            const brands = uniq(active.map(r => r.brand)).length;
+            const sups = uniq(active.map(r => r.supervisor)).length;
+            const wkShifts = active.filter(r => isWK(r.date)).length;
+            const wdShifts = active.filter(r => isWD(r.date)).length;
+            const total = wdShifts + wkShifts;
+            const wkPct = total > 0 ? Math.round(wkShifts / total * 100) : 0;
+            const wdPct = 100 - wkPct;
+
+            const stats = [
+                { emoji: '🏬', val: stores, label: 'Stores' },
+                { emoji: '📋', val: shifts, label: 'Ca Active' },
+                { emoji: '📅', val: wdays, label: 'Ngày làm' },
+                { emoji: '🏷', val: brands, label: 'Brands' },
+                { emoji: '👤', val: sups, label: 'Sups' },
+            ];
+
+            qs.innerHTML = stats.map((s, i) => `
+        ${i > 0 ? '<span class="text-white/20">·</span>' : ''}
+        <div class="flex items-center gap-1.5">
+            <span class="text-base leading-none">${s.emoji}</span>
+            <div>
+                <div class="text-base font-bold text-white leading-none">${s.val}</div>
+                <div class="text-[9px] text-white/50 uppercase tracking-wide">${s.label}</div>
+            </div>
+        </div>`).join('');
+
+            // WD / WK progress bar
+            if (wb) wb.innerHTML = `
+        <div class="flex items-center gap-3 w-full max-w-lg">
+            <span class="text-[10px] text-blue-300 whitespace-nowrap">WD <b class="text-white">${wdShifts}</b></span>
+            <div class="flex-1 h-2 bg-white/10 rounded-full overflow-hidden">
+                <div class="h-full rounded-full" style="width:${wdPct}%;background:linear-gradient(90deg,#60a5fa,#3b82f6)"></div>
+            </div>
+            <span class="text-[10px] text-amber-300 whitespace-nowrap">WK <b class="text-white">${wkShifts}</b></span>
+            <div class="flex-1 h-2 bg-white/10 rounded-full overflow-hidden">
+                <div class="h-full rounded-full" style="width:${wkPct}%;background:linear-gradient(90deg,#fbbf24,#f59e0b)"></div>
+            </div>
+            <span class="text-[10px] text-white/40">WK/WD = ${wdShifts > 0 ? (wkShifts / wdShifts * 100).toFixed(0) : 0}%</span>
+        </div>`;
+        }
+
+        // ── BA Status Grid — expandable store accordion ────────────────
+        function renderBAGrid(mData) {
+            const el = document.getElementById('ba-grid');
+            if (!el) return;
+
+            // Use ALL statuses for the grid, but flag Active vs others
+            if (!mData.length) { el.innerHTML = '<p class="text-sm text-slate-400">Không có dữ liệu</p>'; return; }
+
+            // Group ALL rows by store
+            const storeMap = {};
+            mData.forEach(r => {
+                if (!storeMap[r.store]) storeMap[r.store] = [];
+                storeMap[r.store].push(r);
+            });
+
+            // Sort stores by Active shift count desc
+            const stores = Object.keys(storeMap).sort((a, b) => {
+                const ca = storeMap[a].filter(r => r.status === 'Active').length;
+                const cb = storeMap[b].filter(r => r.status === 'Active').length;
+                return cb - ca;
+            });
+
+            const rows = stores.map((store, idx) => {
+                const shifts = storeMap[store];
+                const active = shifts.filter(r => r.status === 'Active');
+                const vacant = shifts.filter(r => (r.status || '').toLowerCase() === 'trống ba');
+
+                const wd = active.filter(r => isWD(r.date)).length;
+                const wk = active.filter(r => isWK(r.date)).length;
+                const brands = uniq(active.map(r => r.brand).concat(vacant.map(r => r.brand)));
+                const uniqueDays = uniq(active.map(r => r.date)).length;
+
+                // Brand chips in summary row
+                const brandChips = brands.map(b => {
+                    const c = brand(b);
+                    return `<span class="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${c.chip} whitespace-nowrap">
+                <span class="w-1.5 h-1.5 rounded-full" style="background:${c.dot}"></span>${b}
+            </span>`;
+                }).join('');
+
+                // Detail rows sorted by date
+                const detailRows = [...shifts].sort((a, b) => a.date.localeCompare(b.date)).map(r => {
+                    const dow = getDOW(r.date);
+                    const wkFlag = isWK(r.date);
+                    const c = brand(r.brand);
+
+                    let statBadge = `<span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full badge-${(r.status || 'off').toLowerCase().replace(/\s+/g, '-')}">${r.status || '—'}</span>`;
+                    if ((r.status || '').toLowerCase() === 'trống ba') {
+                        statBadge = `<span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-500 text-white border border-rose-600 shadow-sm animate-[pulse_2s_ease-in-out_infinite]">Trống BA</span>`;
+                    }
+
+                    return `<tr class="hover:bg-blue-50/40 transition-colors border-b border-slate-100/60">
+                <td class="pl-10 pr-3 py-1.5 text-xs text-slate-500 font-mono whitespace-nowrap">
+                    ${r.date.slice(8)}/${r.date.slice(5, 7)}
+                    <span class="ml-1 text-[9px] px-1.5 py-0.5 rounded ${wkFlag ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}">${DOW_VN[dow]}</span>
+                </td>
+                <td class="px-3 py-1.5 whitespace-nowrap">
+                    <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${c.chip}">${r.brand}</span>
+                </td>
+                <td class="px-3 py-1.5 text-xs text-slate-600 max-w-[200px]">
+                    <span class="truncate block" title="${r.project}">${r.project || '—'}</span>
+                </td>
+                <td class="px-3 py-1.5 text-xs font-mono text-slate-500 whitespace-nowrap">${r.workingTime || '—'}</td>
+                <td class="px-3 py-1.5">
+                    ${statBadge}
+                </td>
+            </tr>`;
+                }).join('');
+
+                const vacantAlert = vacant.length > 0 ? `<span class="ml-2 text-[10px] font-bold text-rose-500 bg-rose-100 px-1.5 py-0.5 rounded-full animate-pulse border border-rose-200">⚠ Đang Tuyển BA</span>` : '';
+
+                return `
+        <tr class="hover:bg-slate-50 cursor-pointer border-b border-slate-100 transition-colors"
+            onclick="toggleBADetail(${idx})" data-store="${store.toLowerCase().replace(/"/g, '&quot;')}">
+            <td class="px-4 py-3">
+                <div class="flex items-center gap-2 flex-wrap">
+                    <i id="ba-icon-${idx}" class="fa-solid fa-chevron-right text-[10px] text-slate-300 transition-all duration-200 flex-shrink-0"></i>
+                    <span class="text-sm font-semibold text-slate-700">${store}</span>
+                    <span class="text-[10px] text-slate-400 ml-1">${uniqueDays} ngày Active</span>
+                    ${vacantAlert}
+                </div>
+            </td>
+            <td class="px-4 py-3 text-center whitespace-nowrap">
+                <span class="text-sm font-bold text-blue-700">${wd}</span>
+                <span class="text-[10px] text-slate-400 ml-0.5">ca</span>
+            </td>
+            <td class="px-4 py-3 text-center whitespace-nowrap">
+                <span class="text-sm font-bold text-amber-700">${wk}</span>
+                <span class="text-[10px] text-slate-400 ml-0.5">ca</span>
+            </td>
+            <td class="px-4 py-3 text-center">
+                <span class="text-sm font-bold text-slate-700">${active.length}</span>
+            </td>
+            <td class="px-4 py-3">
+                <div class="flex flex-wrap gap-1">${brandChips || '<span class="text-slate-300 text-xs">—</span>'}</div>
+            </td>
+        </tr>
+        <tr id="ba-detail-${idx}" class="hidden bg-slate-50/60">
+            <td colspan="5" class="p-0 border-b border-slate-200">
+                <div class="mx-4 my-2 rounded-xl border border-blue-100 overflow-hidden shadow-sm">
+                    <table class="w-full border-collapse">
+                        <thead>
+                            <tr class="bg-blue-600 text-white">
+                                <th class="pl-10 pr-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap">Ngày</th>
+                                <th class="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide">Brand</th>
+                                <th class="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide">Project</th>
+                                <th class="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap">Working Time</th>
+                                <th class="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-slate-100">${detailRows}</tbody>
+                    </table>
+                </div>
+            </td>
+        </tr>`;
+            }).join('');
+
+            el.innerHTML = `
+        <div class="flex flex-wrap items-center gap-3 mb-3">
+            <div class="relative flex-1 min-w-[180px]">
+                <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                <input id="ba-search" type="text" placeholder="Tìm kiếm tên store..."
+                    oninput="filterBAGrid(this.value)"
+                    class="w-full pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all">
+            </div>
+            <span class="text-xs text-slate-400" id="ba-store-count">${stores.length} stores · bấm để xem chi tiết</span>
+            <button onclick="expandAllBA()" class="text-xs text-blue-600 hover:underline px-2 py-1 rounded border border-blue-100 hover:bg-blue-50 transition-colors">Mở tất cả</button>
+            <button onclick="collapseAllBA()" class="text-xs text-slate-500 hover:underline px-2 py-1 rounded border border-slate-200 hover:bg-slate-50 transition-colors">Thu tất cả</button>
+        </div>
+        <div class="border border-slate-200 rounded-xl overflow-hidden">
+            <table class="w-full border-collapse text-sm" id="ba-table">
+                <thead>
+                    <tr class="bg-slate-50 border-b border-slate-200">
+                        <th class="px-4 py-2.5 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Store</th>
+                        <th class="px-4 py-2.5 text-center text-xs font-semibold text-blue-600 uppercase tracking-wide whitespace-nowrap w-20">WD Ca</th>
+                        <th class="px-4 py-2.5 text-center text-xs font-semibold text-amber-600 uppercase tracking-wide whitespace-nowrap w-20">WK Ca</th>
+                        <th class="px-4 py-2.5 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide w-16">Total</th>
+                        <th class="px-4 py-2.5 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Brands</th>
+                    </tr>
+                </thead>
+                <tbody id="ba-tbody">${rows}</tbody>
+            </table>
+        </div>`;
+        }
+
+        function toggleBADetail(idx) {
+            const detail = document.getElementById(`ba-detail-${idx}`);
+            const icon = document.getElementById(`ba-icon-${idx}`);
+            if (!detail) return;
+            const open = detail.classList.toggle('hidden');// open=true means now hidden (just closed)
+            if (icon) {
+                icon.style.transform = open ? '' : 'rotate(90deg)';
+                icon.classList.toggle('text-blue-500', !open);
+                icon.classList.toggle('text-slate-300', open);
+            }
+        }
+
+        function expandAllBA() {
+            const tbody = document.getElementById('ba-tbody');
+            if (!tbody) return;
+            tbody.querySelectorAll('[id^="ba-detail-"]').forEach((el, i) => {
+                el.classList.remove('hidden');
+                const icon = document.getElementById(`ba-icon-${el.id.split('-').pop()}`);
+                if (icon) { icon.style.transform = 'rotate(90deg)'; icon.classList.add('text-blue-500'); icon.classList.remove('text-slate-300'); }
+            });
+        }
+
+        function collapseAllBA() {
+            const tbody = document.getElementById('ba-tbody');
+            if (!tbody) return;
+            tbody.querySelectorAll('[id^="ba-detail-"]').forEach(el => {
+                el.classList.add('hidden');
+                const icon = document.getElementById(`ba-icon-${el.id.split('-').pop()}`);
+                if (icon) { icon.style.transform = ''; icon.classList.remove('text-blue-500'); icon.classList.add('text-slate-300'); }
+            });
+        }
+
+        function filterBAGrid(q) {
+            const tbody = document.getElementById('ba-tbody');
+            if (!tbody) return;
+            const lq = (q || '').toLowerCase().trim();
+            let vis = 0;
+            const summaryRows = [...tbody.querySelectorAll('tr[data-store]')];
+            summaryRows.forEach((row, i) => {
+                const store = row.dataset.store || '';
+                const show = !lq || store.includes(lq);
+                row.style.display = show ? '' : 'none';
+                const next = row.nextElementSibling;
+                if (next && next.id && next.id.startsWith('ba-detail-')) {
+                    if (!show) next.classList.add('hidden');
+                    next.style.display = show ? '' : 'none';
+                }
+                if (show) vis++;
+            });
+            const cnt = document.getElementById('ba-store-count');
+            if (cnt) cnt.textContent = `${vis} stores · bấm để xem chi tiết`;
+        }
+
+
+
+        // ── Weekday Distribution ───────────────────────────────────────
+        function renderWeekdayDist(mData) {
+            const el = document.getElementById('weekday-dist');
+            if (!el) return;
+
+            // Bỏ qua các ca Trống BA hoặc Off
+            const active = mData.filter(r => r.status && r.status.toLowerCase() !== 'trống ba' && r.status !== 'Off');
+            if (!active.length) { el.innerHTML = '<p class="text-sm text-slate-400">Không có dữ liệu</p>'; return; }
+
+            const brands = uniq(active.map(r => r.brand));
+            const dates = uniq(active.map(r => r.date)).sort();
+
+            // grid: {brand: {date: count}}
+            const grid = {};
+            active.forEach(r => {
+                if (!grid[r.brand]) grid[r.brand] = {};
+                grid[r.brand][r.date] = (grid[r.brand][r.date] || 0) + 1;
+            });
+
+            // Max per date for intensity
+            const maxDate = {};
+            dates.forEach(d => {
+                maxDate[d] = Math.max(...brands.map(b => (grid[b] && grid[b][d]) || 0), 1);
+            });
+
+            // Brand rows
+            const brandRows = brands.map(b => {
+                const c = brand(b);
+                let wdTot = 0, wkTot = 0;
+                const cells = dates.map(d => {
+                    const cnt = (grid[b] && grid[b][d]) || 0;
+                    const isWk = isWK(d);
+                    if (cnt > 0) { isWk ? wkTot += cnt : wdTot += cnt; }
+                    const op = cnt > 0 ? Math.max(0.18, cnt / maxDate[d]) : 0;
+                    const bg = cnt > 0 ? hexWithAlpha(c.dot, op) : '#f8fafc';
+                    const fg = op > 0.55 ? 'white' : c.dot;
+                    return `<td class="text-center border border-slate-100 font-semibold py-2"
+                       style="min-width:40px;background:${bg};color:${cnt > 0 ? fg : '#e2e8f0'}">
+                       ${cnt || '—'}
+                   </td>`;
+                }).join('');
+                return `<tr class="hover:bg-slate-50/30 transition-colors">
+            <td class="px-4 py-2.5 border border-slate-200 whitespace-nowrap sticky left-0 bg-white z-10 shadow-[1px_0_0_#e2e8f0]">
+                <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full" style="background:${c.dot}"></span>
+                    <span class="text-xs font-semibold text-slate-700">${b}</span>
+                </div>
+            </td>
+            ${cells}
+            <td class="text-center px-3 py-2.5 text-sm font-bold text-blue-700 bg-blue-50 border border-slate-200">${wdTot}</td>
+            <td class="text-center px-3 py-2.5 text-sm font-bold text-amber-700 bg-amber-50 border border-slate-200">${wkTot}</td>
+        </tr>`;
+            }).join('');
+
+            // Total row
+            const colTotals = {};
+            dates.forEach(d => { colTotals[d] = brands.reduce((s, b) => s + ((grid[b] && grid[b][d]) || 0), 0); });
+            const totalWD = dates.filter(d => isWD(d)).reduce((s, d) => s + colTotals[d], 0);
+            const totalWK = dates.filter(d => isWK(d)).reduce((s, d) => s + colTotals[d], 0);
+            const totalRow = dates.map(d => {
+                const isWk = isWK(d);
+                return `<td class="text-center px-2 py-2 text-xs font-bold text-slate-600 border border-slate-200 ${isWk ? 'bg-amber-100' : 'bg-slate-100'}">${colTotals[d]}</td>`;
+            }).join('');
+
+            el.innerHTML = `
+        <div class="overflow-x-auto pb-2">
+        <table class="min-w-full border-collapse text-sm">
+            <thead>
+                <tr class="bg-slate-50">
+                    <th class="px-4 py-2.5 text-left text-xs font-semibold text-slate-500 border border-slate-200 whitespace-nowrap sticky left-0 z-20 bg-slate-50 shadow-[1px_0_0_#e2e8f0]">Brand / Dự Án</th>
+                    ${dates.map(d => {
+                const isWk = isWK(d);
+                const dow = getDOW(d);
+                const shortDate = d.slice(8) + '/' + d.slice(5, 7);
+                return `<th class="px-1 py-2 text-center text-[10px] font-bold border border-slate-200 ${isWk ? 'bg-amber-50 text-amber-700' : 'text-slate-600'}" style="min-width:45px">
+                            ${DOW_VN[dow]}<br><span class="text-[9px] font-normal opacity-70">${shortDate}</span>
+                        </th>`;
+            }).join('')}
+                    <th class="px-3 py-2.5 text-center text-xs font-bold bg-blue-50 text-blue-700 border border-slate-200 whitespace-nowrap">WD Total</th>
+                    <th class="px-3 py-2.5 text-center text-xs font-bold bg-amber-50 text-amber-700 border border-slate-200 whitespace-nowrap">WK Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${brandRows}
+                <tr class="bg-slate-100 font-bold">
+                    <td class="px-4 py-2 text-xs font-bold text-slate-600 border border-slate-200 sticky left-0 bg-slate-100 z-10 shadow-[1px_0_0_#e2e8f0]">TOTAL</td>
+                    ${totalRow}
+                    <td class="text-center px-3 py-2 font-bold text-blue-700 bg-blue-100 border border-slate-200">${totalWD}</td>
+                    <td class="text-center px-3 py-2 font-bold text-amber-700 bg-amber-100 border border-slate-200">${totalWK}</td>
+                </tr>
+            </tbody>
+        </table>
+        </div>`;
+        }
+
+        /** Convert hex color + alpha 0-1 → rgba */
+        function hexWithAlpha(hex, alpha) {
+            const h = hex.replace('#', '');
+            const r = parseInt(h.slice(0, 2), 16);
+            const g = parseInt(h.slice(2, 4), 16);
+            const b = parseInt(h.slice(4, 6), 16);
+            return `rgba(${r},${g},${b},${alpha.toFixed(2)})`;
+        }
+
+        // ── Weekend Supervisor Coverage — compact table per week ────────
+        function renderWeekendCoverage(mData) {
+            const el = document.getElementById('weekend-coverage');
+            if (!el) return;
+            const allActive = mData.filter(r => r.status === 'Active' && r.date);
+            const wkActive = allActive.filter(r => isWK(r.date));
+            if (!wkActive.length) { el.innerHTML = '<p class="text-sm text-slate-400 p-2">Không có dữ liệu cuối tuần Active</p>'; return; }
+
+            // Group: date → sup → stores (Set)
+            const byDate = {};
+            wkActive.forEach(r => {
+                if (!byDate[r.date]) byDate[r.date] = {};
+                if (!byDate[r.date][r.supervisor]) byDate[r.date][r.supervisor] = new Set();
+                byDate[r.date][r.supervisor].add(r.store);
+            });
+
+            const wkDates = Object.keys(byDate).sort();
+
+            // Pair T7+CN into weekends
+            const weekends = {}; // t7date → {sat, sun}
+            wkDates.forEach(d => {
+                const dow = getDOW(d);
+                if (dow === 6) { // Saturday
+                    if (!weekends[d]) weekends[d] = { sat: d, sun: null };
+                } else if (dow === 0) { // Sunday
+                    const [y, m, dd] = d.split('-').map(Number);
+                    const prev = new Date(y, m - 1, dd - 1).toISOString().slice(0, 10);
+                    if (weekends[prev]) weekends[prev].sun = d;
+                    else weekends[d] = { sat: null, sun: d };
+                }
+            });
+
+            let html = '';
+            Object.keys(weekends).sort().forEach(key => {
+                const wknd = weekends[key];
+                const cols = [wknd.sat, wknd.sun].filter(Boolean);
+                const isoWeek = getISOWeek(wknd.sat || wknd.sun);
+
+                // Lấy tất cả ca làm việc trong tuần ISO này (bao gồm cả ngày thường)
+                const thisWeekShifts = allActive.filter(r => getISOWeek(r.date) === isoWeek);
+
+                const colMeta = cols.map(d => {
+                    const dow = getDOW(d);
+                    const dd = d.slice(8), mm = d.slice(5, 7);
+                    return { d, label: `${DOW_VN[dow]} ${dd}/${mm}`, isSat: dow === 6 };
+                });
+
+                // Sups active in this weekend
+                const supsHere = new Set();
+                cols.forEach(d => { Object.keys(byDate[d] || {}).forEach(s => supsHere.add(s)); });
+                const supsList = [...supsHere].sort();
+
+                // Header
+                let headersHTML = `
+            <th class="px-3 py-2 text-left text-[10px] font-semibold text-slate-500 border border-slate-200 bg-slate-50 w-20 sticky left-0 z-10 shadow-[1px_0_0_#e2e8f0]">Supervisor</th>
+            <th class="px-2 py-2 text-center text-[10px] font-semibold text-blue-700 border border-slate-200 bg-blue-50/50 min-w-[60px]" title="Tổng số Store trong cả tuần">Tổng Store<br>(Cả Tuần)</th>
+            <th class="px-3 py-2 text-left text-[10px] font-semibold text-blue-700 border border-slate-200 bg-blue-50/50 min-w-[120px]">Dự Án (Cả Tuần)</th>
+        `;
+
+                headersHTML += colMeta.map(cm => `
+            <th class="px-3 py-2 text-left text-[10px] font-bold border border-slate-200 whitespace-nowrap
+                       ${cm.isSat ? 'bg-orange-50 text-orange-700' : 'bg-amber-50 text-amber-700'}">
+                ${cm.label}
+            </th>`).join('');
+
+                // Body rows: one row per sup
+                const rows = supsList.map(sup => {
+                    // Tính toán tổng Store và Project trong cả tuần cho Sup này
+                    const supWeekShifts = thisWeekShifts.filter(r => r.supervisor === sup);
+                    const uniqueStores = uniq(supWeekShifts.map(r => r.store)).length;
+                    const uniqueProjects = uniq(supWeekShifts.map(r => r.project || r.brand));
+
+                    const projectBadges = uniqueProjects.map(p => {
+                        return `<span class="inline-block text-[9px] px-1.5 py-0.5 rounded bg-white text-slate-600 mb-0.5 mr-0.5 truncate max-w-[120px] border border-slate-200 shadow-sm" title="${p}">${p}</span>`;
+                    }).join('');
+
+                    const weekStatsCell = `
+                <td class="px-2 py-2 border border-slate-200 text-center font-bold text-blue-700 bg-blue-50/30 text-[11px]">
+                    ${uniqueStores}
+                </td>
+                <td class="px-3 py-2 border border-slate-200 bg-blue-50/30">
+                    <div class="flex flex-wrap gap-0.5">${projectBadges || '<span class="text-[9px] text-slate-400">—</span>'}</div>
+                </td>
+            `;
+
+                    const cells = colMeta.map(cm => {
+                        const supData = byDate[cm.d] && byDate[cm.d][sup];
+                        if (!supData) return `<td class="px-3 py-2 border border-slate-100 text-center text-slate-200 text-xs">—</td>`;
+                        const stores = [...supData];
+                        const cnt = stores.length;
+                        const warn = cnt >= WARN_SUPS;
+                        const preview = stores.slice(0, 2).join(', ') + (stores.length > 2 ? ` +${stores.length - 2} nữa` : '');
+                        return `<td class="px-3 py-2 border border-slate-100 ${warn ? 'bg-amber-50/70' : ''}">
+                    <div class="flex items-center gap-1 mb-0.5">
+                        <span class="text-xs font-bold ${warn ? 'text-amber-700' : 'text-green-700'}">${cnt} stores</span>
+                        <span class="text-xs">${warn ? '⚠️' : '✅'}</span>
+                    </div>
+                    <div class="text-[9px] text-slate-400 leading-4 max-w-[160px] truncate" title="${stores.join(', ')}">${preview}</div>
+                </td>`;
+                    }).join('');
+
+                    return `<tr class="hover:bg-slate-50/50 transition-colors">
+                <td class="px-3 py-2 border border-slate-200 bg-slate-50 whitespace-nowrap text-xs font-semibold text-slate-700 sticky left-0 z-10 shadow-[1px_0_0_#e2e8f0]">
+                    <i class="fa-solid fa-user-tie text-slate-400 mr-1 text-[10px]"></i>${sup}
+                </td>
+                ${weekStatsCell}
+                ${cells}
+            </tr>`;
+                }).join('');
+
+                html += `<div class="mb-4">
+            <div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Tuần ${isoWeek}</div>
+            <div class="overflow-x-auto pb-2">
+            <table class="w-full border-collapse text-xs">
+                <thead><tr>
+                    ${headersHTML}
+                </tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+            </div>
+        </div>`;
+            });
+
+            el.innerHTML = html || '<p class="text-sm text-slate-400 p-2">Không có cuối tuần</p>';
+        }
+
+        // ╔══════════════════════════════════════════════════════════════╗
+        // ║  🏥  HR STATUS LOGIC                                          ║
+        // ╚══════════════════════════════════════════════════════════════╝
+        let hrData = null;
+
+        async function loadHRData(force = false, silent = false) {
+            if (!force && hrData !== null) {
+                renderHRStatus();
+                return;
+            }
+
+            const tbody = document.getElementById('hr-tbody');
+            if (tbody && !silent) tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400 text-sm"><i class="fa-solid fa-spinner fa-spin mr-2"></i> Đang lấy dữ liệu từ Google Sheets...</td></tr>';
+
+            try {
+                const url = `${CONFIG.APPS_SCRIPT_URL}?action=getData&sheet=HR_Status`;
+                const res = await fetch(url);
+                const json = await res.json();
+
+                if (json.error) throw new Error(json.message);
+
+                hrData = json;
+                renderHRStatus();
+            } catch (e) {
+                if (tbody && !silent) tbody.innerHTML = `<tr><td colspan="7" class="p-8 text-center text-red-500 text-sm"><i class="fa-solid fa-triangle-exclamation mr-2"></i> Lỗi: ${e.message}. Hãy đảm bảo đã tạo tab "HR_Status" trong Google Sheets!</td></tr>`;
+            }
+        }
+
+        function injectVacantStores() {
+            if (!hrData || hrData.length === 0) return;
+
+            const today = new Date();
+            const currYear = today.getFullYear();
+            const monthNames = { 'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5, 'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11 };
+
+            let maxDate = new Date(today);
+            maxDate.setDate(today.getDate() + 45); // Trải dài ra 45 ngày để cover cuối tháng / tháng sau
+
+            hrData.forEach(r => {
+                const store = r['Mart Name'] || '—';
+                const brand = r['Brand'] || '—';
+                const sup = r['Sup'] || '—';
+                const project = r['Project'] || '—';
+                const hrStatus = (r['Tình trạng Tuyển Dụng'] || '').trim();
+                const region = r['Region'] || r['Khu vực'] || r['Khu Vực'] || 'Khác';
+
+                let vacantDateStr = (r['Ngày siêu trống BA'] || '').trim(); // e.g. "28-Jul"
+                if (!vacantDateStr) return;
+
+                let parts = vacantDateStr.split('-');
+                if (parts.length !== 2) return;
+
+                let day = parseInt(parts[0], 10);
+                let monthName = parts[1];
+                let month = monthNames[monthName];
+
+                if (isNaN(day) || month === undefined) return;
+
+                let startDate = new Date(currYear, month, day);
+                if (isNaN(startDate.getTime())) return;
+
+                // Trải dài record giả từ Ngày bắt đầu trống đến 45 ngày sau
+                for (let d = new Date(startDate); d <= maxDate; d.setDate(d.getDate() + 1)) {
+                    let isoDate = d.toISOString().slice(0, 10);
+
+                    allData.push({
+                        date: isoDate,
+                        brand: brand,
+                        project: project,
+                        region: region,
+                        store: store,
+                        supervisor: sup,
+                        workingTime: `[Trống BA] - Đang ${hrStatus}`,
+                        status: 'Trống BA'
+                    });
+                }
+            });
+        }
+
+        function renderHRStatus() {
+            if (!hrData) return;
+
+            let sourcing = 0, interviewing = 0, offering = 0;
+
+            // Filter by Sup role if needed
+            let data = hrData;
+            if (currentUser && currentUser.role === 'sup') {
+                data = data.filter(r => (r['Sup'] || '').trim().toLowerCase() === currentUser.displayName.toLowerCase());
+            }
+
+            const rows = data.map(r => {
+                const store = r['Mart Name'] || '—';
+                const brandStr = r['Brand'] || '—';
+                const project = r['Project'] || '—';
+                const sup = r['Sup'] || '—';
+                const shopStatus = r['Tình trạng shop'] || '—';
+                const vacantDate = r['Ngày siêu trống BA'] || '—';
+                const targetWeek = r['Target of Week'] || '—';
+                const hrStatus = (r['Tình trạng Tuyển Dụng'] || '').trim();
+
+                let statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-500">${hrStatus || '—'}</span>`;
+                if (hrStatus.toLowerCase() === 'sourcing') {
+                    sourcing++;
+                    statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700 border border-amber-200">Sourcing</span>`;
+                } else if (hrStatus.toLowerCase() === 'interviewing') {
+                    interviewing++;
+                    statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-orange-100 text-orange-700 border border-orange-200">Interviewing</span>`;
+                } else if (hrStatus.toLowerCase() === 'offering') {
+                    offering++;
+                    statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-700 border border-emerald-200">Offering</span>`;
+                }
+
+                const bColor = brand(brandStr);
+
+                return `<tr class="hover:bg-slate-50/70 transition-colors">
+            <td class="px-4 py-2.5 whitespace-nowrap">
+                <div class="font-semibold text-slate-700">${store}</div>
+                <div class="text-[10px] font-semibold px-1.5 py-0.5 mt-1 rounded inline-block ${bColor.chip}">${brandStr}</div>
+            </td>
+            <td class="px-3 py-2.5 text-xs text-slate-600">${project}</td>
+            <td class="px-3 py-2.5 text-xs font-semibold text-slate-600"><i class="fa-solid fa-user-tie text-[10px] text-slate-400 mr-1"></i>${sup}</td>
+            <td class="px-3 py-2.5 text-[11px] text-slate-500">${shopStatus}</td>
+            <td class="px-3 py-2.5 text-xs font-mono font-semibold text-rose-600">${vacantDate}</td>
+            <td class="px-3 py-2.5 text-xs font-mono font-bold text-blue-600">${targetWeek}</td>
+            <td class="px-4 py-2.5">${statusBadge}</td>
+        </tr>`;
+            });
+
+            const tbody = document.getElementById('hr-tbody');
+            if (tbody) {
+                if (rows.length > 0) tbody.innerHTML = rows.join('');
+                else tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400 text-sm">Không có siêu thị nào đang trống. Tuyệt vời! 🎉</td></tr>';
+            }
+
+            const countEl = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+            countEl('hr-kpi-total', data.length);
+            countEl('hr-kpi-sourcing', sourcing);
+            countEl('hr-kpi-interviewing', interviewing);
+            countEl('hr-kpi-offering', offering);
+        }
+
+
+
+        // ╔══════════════════════════════════════════════════════════════╗
+        // ║  🔄  REFRESH / LOADING                                        ║
+        // ╚══════════════════════════════════════════════════════════════╝
+        function showLoading(on, msg = '') {
+            const el = document.getElementById('loading-overlay');
+            if (el) el.style.display = on ? 'flex' : 'none';
+            if (msg) { const t = document.getElementById('loading-text'); if (t) t.textContent = msg; }
+        }
+
+        async function handleRefresh() {
+            const icon = document.getElementById('refresh-icon');
+            if (icon) icon.classList.add('animate-spin');
+
+            if (activeTab === 'hr') {
+                await loadHRData(true);
+            } else {
+                await loadData();
+            }
+
+            setTimeout(() => { if (icon) icon.classList.remove('animate-spin'); }, 800);
+        }
+
+        // ╔══════════════════════════════════════════════════════════════╗
+        // ║  🕐  CLOCK                                                    ║
+        // ╚══════════════════════════════════════════════════════════════╝
+        function startClock() {
+            const el = document.getElementById('live-clock');
+            if (!el) return;
+            const tick = () => { el.textContent = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); };
+            tick(); setInterval(tick, 1000);
+        }
+
+        // ╔══════════════════════════════════════════════════════════════╗
+        // ║  🎯  EVENT BINDING                                            ║
+        // ╚══════════════════════════════════════════════════════════════╝
+        function bindEvents() {
+            ['f-from', 'f-to', 'f-brand', 'f-store', 'f-sup', 'f-status'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) { el.addEventListener('change', applyFilters); el.addEventListener('input', applyFilters); }
+            });
+            document.getElementById('store-pills')?.addEventListener('click', e => {
+                const b = e.target.closest('[data-store-filter]');
+                if (!b) return;
+                const el = document.getElementById('f-store');
+                if (el) el.value = el.value === b.dataset.storeFilter ? '' : b.dataset.storeFilter;
+                applyFilters();
+            });
+
+            // Scroll listener for back-to-top button
+            window.addEventListener('scroll', () => {
+                const btn = document.getElementById('btn-back-to-top');
+                if (btn) {
+                    if (window.scrollY > 200) {
+                        btn.classList.remove('opacity-0', 'pointer-events-none');
+                    } else {
+                        btn.classList.add('opacity-0', 'pointer-events-none');
+                    }
+                }
+            });
+        }
+
+        // ╔══════════════════════════════════════════════════════════════╗
+        // ║  🚀  INIT                                                     ║
+        // ╚══════════════════════════════════════════════════════════════╝
+        startClock();
+        bindEvents();
+        checkAuth();
+        // ╔══════════════════════════════════════════════════════════════╗
+        // ║  🖨️  PDF EXPORT                                                ║
+        // ╚══════════════════════════════════════════════════════════════╝
+        function exportPDF() {
+            if (!filtered || filtered.length === 0) {
+                alert("Không có dữ liệu để in. Vui lòng kiểm tra lại bộ lọc.");
+                return;
+            }
+
+            // Group by Region -> Supervisor
+            const groups = {};
+            filtered.forEach(r => {
+                const reg = r.region || 'Khác';
+                const sup = r.supervisor || 'Khác';
+                if (!groups[reg]) groups[reg] = {};
+                if (!groups[reg][sup]) groups[reg][sup] = [];
+                groups[reg][sup].push(r);
+            });
+
+            // Sort Regions
+            let regionKeys = Object.keys(groups).sort((a, b) => {
+                const _a = a.toUpperCase(); const _b = b.toUpperCase();
+                if (_a.includes('HCM') || _a.includes('HỒ CHÍ MINH')) return -1;
+                if (_b.includes('HCM') || _b.includes('HỒ CHÍ MINH')) return 1;
+                if (_a.includes('HN') || _a.includes('HÀ NỘI')) return -1;
+                if (_b.includes('HN') || _b.includes('HÀ NỘI')) return 1;
+                return a.localeCompare(b);
+            });
+
+            let html = `<div class="print-title">LỊCH ĐI TUẦN QC</div>`;
+            const fFrom = document.getElementById('f-from').value;
+            const fTo = document.getElementById('f-to').value;
+            if (fFrom && fTo) {
+                const formatDt = (d) => `${d.slice(8)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
+                html += `<div class="print-subtitle">Thời gian: Từ ${formatDt(fFrom)} đến ${formatDt(fTo)}</div>`;
+            }
+
+            let isFirstRegion = true;
+            regionKeys.forEach(reg => {
+                const supKeys = Object.keys(groups[reg]).sort((a, b) => a.localeCompare(b));
+
+                html += `<div class="region-title${!isFirstRegion ? ' page-break' : ''}">Khu vực: ${reg}</div>`;
+                isFirstRegion = false;
+
+                supKeys.forEach(sup => {
+                    html += `<div style="font-weight:bold; font-size:13px; margin: 15px 0 5px 0; color:#1e40af;">👤 Supervisor: ${sup}</div>`;
+                    html += `<table class="print-table">
+                <thead>
+                    <tr>
+                        <th style="width:100px">Ngày</th>
+                        <th style="width:180px">Siêu thị (Store)</th>
+                        <th style="width:90px">Brand</th>
+                        <th style="width:110px">Ca làm việc</th>
+                        <th style="width:100px">Trạng thái</th>
+                        <th>Ghi chú QC</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+                    const rows = groups[reg][sup].sort((a, b) => a.date.localeCompare(b.date));
+                    rows.forEach(r => {
+                        const dow = DOW_VN[getDOW(r.date)];
+                        const dateShort = `${r.date.slice(8)}/${r.date.slice(5, 7)}`;
+                        const isVacant = (r.status || '').toLowerCase() === 'trống ba';
+                        const statText = isVacant ? 'Trống BA' : (r.status || '—');
+
+                        html += `<tr>
+                    <td style="font-weight:bold">${dow} (${dateShort})</td>
+                    <td>${r.store}</td>
+                    <td>${r.brand}</td>
+                    <td>${r.workingTime || '—'}</td>
+                    <td style="${isVacant ? 'color:#e11d48;font-weight:bold' : ''}">${statText}</td>
+                    <td><div class="print-note-box"></div></td>
+                </tr>`;
+                    });
+                    html += `</tbody></table>`;
+                });
+            });
+
+            let printArea = document.getElementById('print-area');
+            if (!printArea) {
+                printArea = document.createElement('div');
+                printArea.id = 'print-area';
+                document.body.appendChild(printArea);
+            }
+            printArea.innerHTML = html;
+
+            setTimeout(() => {
+                window.print();
+            }, 300);
+        }
+    </script>
+</body>
+
+</html>

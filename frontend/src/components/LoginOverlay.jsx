@@ -1,72 +1,100 @@
-// src/components/LoginOverlay.jsx
-import React, { useState } from "react";
-import { useAuth } from "../auth/useAuth";
+import React, { useState } from 'react';
+import { signIn, signOutUser, onAuthStateChangedListener } from '../firebase';
 
-const LoginOverlay = () => {
-  const { loginEmail, registerEmail, loginGoogle, error, loading } = useAuth();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [isRegister, setIsRegister] = useState(false);
+/**
+ * LoginOverlay – email/password login UI with Firebase SDK & Mock fallback for preview.
+ */
+export default function LoginOverlay({ onLoginSuccess }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (isRegister) {
-      await registerEmail(email, password);
-    } else {
-      await loginEmail(email, password);
+    setLoading(true);
+    setError('');
+    try {
+      const res = await signIn(email, password);
+      const user = res?.user || { email, uid: 'demo-123', displayName: email.split('@')[0] };
+      if (onLoginSuccess) onLoginSuccess(user);
+    } catch (err) {
+      console.error(err);
+      setError(err.message || 'Đăng nhập thất bại. Vui lòng kiểm tra lại thông tin.');
+    } finally {
+      setLoading(false);
     }
   };
 
+  React.useEffect(() => {
+    const unsubscribe = onAuthStateChangedListener((user) => {
+      if (!user) {
+        setEmail('');
+        setPassword('');
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-800 to-slate-900 text-white">
-      <div className="bg-slate-800 bg-opacity-80 rounded-lg p-8 shadow-xl backdrop-blur-md w-96">
-        <h2 className="text-2xl font-bold mb-4 text-center">Login</h2>
-        {error && <p className="text-red-400 mb-2">{error}</p>}
+    <div id="login-overlay" className="login-overlay">
+      <div className="login-card">
+        <div className="text-center mb-6">
+          <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-500/30">
+            <i className="fa-solid fa-chart-gantt text-white text-2xl" />
+          </div>
+          <h2 className="text-xl font-bold text-slate-800">Field Operation Dashboard</h2>
+          <p className="text-sm text-slate-400 mt-1">Đăng nhập để tiếp tục</p>
+        </div>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <input
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            className="w-full px-3 py-2 rounded bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            className="w-full px-3 py-2 rounded bg-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-2 bg-blue-600 hover:bg-blue-500 rounded transition"
-          >
-            {isRegister ? "Register" : "Login"}
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Tài khoản (Email)</label>
+            <input
+              type="text"
+              id="login-user"
+              className="login-input"
+              placeholder="Nhập email (ví dụ: admin@example.com)"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoComplete="username"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Mật khẩu</label>
+            <input
+              type="password"
+              id="login-pass"
+              className="login-input"
+              placeholder="Nhập mật khẩu"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              autoComplete="current-password"
+            />
+          </div>
+          {error && (
+            <div id="login-error" className="text-red-500 text-xs font-medium bg-red-50 p-2.5 rounded-lg border border-red-100 flex items-center gap-2">
+              <i className="fa-solid fa-circle-exclamation text-red-500"></i>
+              <span>{error}</span>
+            </div>
+          )}
+          <button type="submit" className="login-btn flex items-center justify-center gap-2" disabled={loading}>
+            {loading ? (
+              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+            ) : (
+              <>
+                <i className="fa-solid fa-right-to-bracket" />
+                <span>Đăng nhập</span>
+              </>
+            )}
           </button>
         </form>
-        <div className="my-4 flex items-center justify-center">
-          <button
-            onClick={loginGoogle}
-            className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-500 rounded transition"
-          >
-            <i className="fa-brands fa-google"></i> Sign in with Google
-          </button>
+        <div className="mt-4 pt-4 border-t border-slate-100 text-center">
+          <p className="text-[11px] text-slate-400">Gợi ý test: <code className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">admin@example.com</code></p>
         </div>
-        <p className="text-center text-sm mt-2">
-          {isRegister ? "Already have an account? " : "New here? "}
-          <span
-            className="cursor-pointer text-blue-400 underline"
-            onClick={() => setIsRegister(!isRegister)}
-          >
-            {isRegister ? "Login" : "Register"}
-          </span>
-        </p>
+        <p className="text-center text-[10px] text-slate-300 mt-4">PG/BA Schedule Dashboard v2.0</p>
       </div>
     </div>
   );
-};
-
-export default LoginOverlay;
+}

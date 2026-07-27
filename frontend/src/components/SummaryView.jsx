@@ -174,6 +174,20 @@ export default function SummaryView({ refreshKey = 0 }) {
   const activeCount = rosterRows.length;
   const offCount    = 0;
 
+  /* ── Total BAs (Sum of project placements across stores) ─────────────── */
+  const totalBAs = useMemo(() => {
+    let count = 0;
+    filteredStores.forEach(s => {
+      if (selSup) {
+        const supProjs = new Set(s.shifts.filter(sh => sh.sup === selSup).map(sh => sh.project));
+        count += supProjs.size;
+      } else {
+        count += s.projects.size;
+      }
+    });
+    return count;
+  }, [filteredStores, selSup]);
+
   /* ── Total unique physical supermarket stores count ────────────────── */
   const uniqueStoreCount = useMemo(() => {
     return filteredStores.length;
@@ -356,8 +370,8 @@ export default function SummaryView({ refreshKey = 0 }) {
           gradient="from-blue-500 to-indigo-600"
           icon="fa-id-badge"
           label="Tổng Số BA & Store Điểm Bán"
-          value={`${filteredStores.length} BA / ${uniqueStoreCount} Store`}
-          sub={selSup ? `Lọc theo SUP: ${selSup}` : `Tổng ${filteredStores.length} vị trí BA tại ${uniqueStoreCount} siêu thị`}
+          value={`${totalBAs} BA / ${uniqueStoreCount} Store`}
+          sub={selSup ? `Lọc theo SUP ${selSup}: ${totalBAs} vị trí BA tại ${uniqueStoreCount} điểm bán` : `Tổng số ${totalBAs} vị trí BA phân bổ tại ${uniqueStoreCount} siêu thị điểm bán`}
         />
         <KpiCard
           gradient="from-violet-500 to-purple-600"

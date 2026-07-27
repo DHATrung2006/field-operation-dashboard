@@ -438,7 +438,7 @@ export default function SummaryView() {
               ) : (
                 rosterRows.map((row, i) => (
                   <tr key={`${row.dateISO}-${row.storeName}-${i}`} className={`hover:bg-blue-50/20 transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}`}>
-                    <td className="px-4 py-2.5 font-mono text-xs text-slate-500 whitespace-nowrap">{row.dateRaw}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-slate-500 whitespace-nowrap">{row.dateISO ? row.dateISO.slice(8,10) + '/' + row.dateISO.slice(5,7) + '/' + row.dateISO.slice(2,4) : ''}</td>
                     <td className="px-4 py-2.5 font-bold text-slate-800 whitespace-nowrap">
                       <div className="flex items-center gap-1.5">
                         {row.storeName}

@@ -582,32 +582,34 @@ function RosterTable({ title, colorBg, colorBorder, colorText, rows, dateFrom, d
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 15;
 
-  /* Group shift rows by Date + Store Name + Brand */
+  /* Group shift rows strictly by Date + Store Name */
   const combinedRows = useMemo(() => {
     const map = new Map();
     rows.forEach(r => {
-      const key = `${r.dateISO}_${(r.storeName || '').toLowerCase()}_${(r.brand || '').toLowerCase()}`;
+      const key = `${r.dateISO}_${(r.storeName || '').toLowerCase()}`;
       if (!map.has(key)) {
         map.set(key, {
           dateISO:   r.dateISO,
           dateRaw:   r.dateRaw,
           storeName: r.storeName,
-          brand:     r.brand,
           province:  r.province,
           region:    r.region,
           isNewHR:   r.isNewHR,
+          brands:    new Set(),
           sups:      new Set(),
           projects:  [],
         });
       }
       const grp = map.get(key);
-      if (r.sup && r.sup !== '—') grp.sups.add(r.sup);
+      if (r.brand && r.brand !== '—') grp.brands.add(r.brand);
+      if (r.sup && r.sup !== '—')     grp.sups.add(r.sup);
       if (r.isNewHR) grp.isNewHR = true;
 
       // Ensure distinct project shift entry
       if (!grp.projects.some(p => p.project === r.project && p.shift === r.shift)) {
         grp.projects.push({
           project: r.project,
+          brand:   r.brand,
           shift:   r.shift,
           sup:     r.sup,
         });
@@ -621,8 +623,8 @@ function RosterTable({ title, colorBg, colorBorder, colorText, rows, dateFrom, d
     const q = search.toLowerCase();
     return combinedRows.filter(r =>
       (r.storeName || '').toLowerCase().includes(q) ||
-      (r.brand || '').toLowerCase().includes(q) ||
       (r.province || '').toLowerCase().includes(q) ||
+      [...r.brands].some(b => b.toLowerCase().includes(q)) ||
       [...r.sups].some(s => s.toLowerCase().includes(q)) ||
       r.projects.some(p => p.project.toLowerCase().includes(q) || p.shift.toLowerCase().includes(q))
     );
@@ -690,7 +692,8 @@ function RosterTable({ title, colorBg, colorBorder, colorText, rows, dateFrom, d
               </tr>
             ) : (
               pageRows.map((r, idx) => {
-                const supStr = [...r.sups].join(', ') || '—';
+                const supStr   = [...r.sups].join(', ') || '—';
+                const brandStr = [...r.brands].join(' · ') || '—';
                 return (
                   <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
                     <td className="py-2.5 px-4 font-mono font-bold text-slate-600 whitespace-nowrap align-top">
@@ -719,7 +722,7 @@ function RosterTable({ title, colorBg, colorBorder, colorText, rows, dateFrom, d
                         })}
                       </div>
                     </td>
-                    <td className="py-2.5 px-4 text-slate-500 font-semibold align-top">{r.brand || '—'}</td>
+                    <td className="py-2.5 px-4 text-slate-500 font-semibold align-top">{brandStr}</td>
                     <td className="py-2.5 px-4 text-slate-600 align-top">{r.province || '—'}</td>
                     <td className="py-2.5 px-4 text-slate-700 font-semibold align-top">{supStr}</td>
                     {/* Shift times with colored project tags */}

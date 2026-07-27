@@ -69,6 +69,7 @@ export default function SummaryView() {
     masterRows.forEach(r => {
       const key = (r['Store Code'] || r['Store Name'] || '').trim();
       if (!key) return;
+      const reg = normalizeRegion(r['Region'], r['Province']);
       if (!map[key]) {
         map[key] = {
           code:        r['Store Code'] || '',
@@ -76,11 +77,18 @@ export default function SummaryView() {
           project:     r['Project'] || '—',
           brand:       r['Brand'] || '—',
           sup:         r['Sup'] || '—',
-          region:      normalizeRegion(r['Region']),
+          region:      reg,
           province:    r['Province'] || '—',
           isNewHR:     hrStoreSet.has((r['Store Name'] || '').trim().toLowerCase()),
           shifts:      [], // {dateObj, dateRaw, time}
         };
+      } else {
+        if (map[key].region === 'Tỉnh' && reg !== 'Tỉnh') {
+          map[key].region = reg;
+        }
+        if ((!map[key].province || map[key].province === '—') && r['Province']) {
+          map[key].province = r['Province'];
+        }
       }
       if (r['Date']) {
         const dateISO = parseVNDateISO(r['Date']);
@@ -364,8 +372,8 @@ export default function SummaryView() {
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-extrabold text-white tracking-wide">{p.project}</span>
                         {p.isActive
-                          ? <span className="bg-emerald-400/30 text-emerald-200 border border-emerald-400/40 px-1.5 py-0.5 rounded text-[10px] font-bold">● Đang chạy</span>
-                          : <span className="bg-slate-300/30 text-slate-200 border border-slate-300/40 px-1.5 py-0.5 rounded text-[10px] font-bold">Hết chương trình</span>
+                          ? <span className="bg-emerald-400/30 text-emerald-200 border border-emerald-400/40 px-1.5 py-0.5 rounded text-[10px] font-bold">● Có ca làm</span>
+                          : <span className="bg-slate-300/30 text-slate-200 border border-slate-300/40 px-1.5 py-0.5 rounded text-[10px] font-bold">○ Tạm chưa có ca</span>
                         }
                       </div>
                       <div className="text-[11px] text-slate-300 font-medium mt-0.5">

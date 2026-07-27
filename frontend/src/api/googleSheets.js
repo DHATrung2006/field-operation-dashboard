@@ -168,15 +168,51 @@ export function getWeek(dateStr) {
 }
 
 /**
- * Normalize Region label
+ * Normalize Region label using both Region and Province fields
  */
-export function normalizeRegion(r) {
+export function normalizeRegion(r, prov) {
+  const pStr = (prov || '').trim().toLowerCase();
+  const rStr = (r || '').trim().toLowerCase();
+
+  // 1. Check Province first (most reliable for HCM / HN)
+  if (
+    pStr.includes('hcm') ||
+    pStr.includes('hồ chí minh') ||
+    pStr.includes('tp.hcm') ||
+    pStr.includes('tphcm')
+  ) {
+    return 'HCM';
+  }
+  if (
+    pStr.includes('hà nội') ||
+    pStr.includes('ha noi') ||
+    pStr.includes('hn')
+  ) {
+    return 'HN';
+  }
+
+  // 2. Check Region
+  if (
+    rStr === 'hcm' ||
+    rStr.includes('hồ chí minh') ||
+    rStr.includes('tphcm')
+  ) {
+    return 'HCM';
+  }
+  if (
+    rStr === 'hn' ||
+    rStr === 'north' ||
+    rStr.includes('hà nội')
+  ) {
+    return 'HN';
+  }
+
   const map = {
     HN: 'HN', HCM: 'HCM',
     North: 'HN', South: 'Tỉnh', Central: 'Tỉnh',
     Tỉnh: 'Tỉnh', Miền: 'Tỉnh',
   };
-  return map[r] || r || 'Tỉnh';
+  return map[r] || 'Tỉnh';
 }
 
 export function getSups(rows) {

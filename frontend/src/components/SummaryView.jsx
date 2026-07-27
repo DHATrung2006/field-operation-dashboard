@@ -55,8 +55,8 @@ export default function SummaryView({ refreshKey = 0 }) {
   const [selSup,          setSelSup]          = useState('');
   const [onlyNewHR,       setOnlyNewHR]       = useState(false);
   const [onlyActiveProj,  setOnlyActiveProj]  = useState(false);
-  const [dateFrom,        setDateFrom]        = useState(todayISO());
-  const [dateTo,          setDateTo]          = useState(todayISO());
+  const [dateFrom,        setDateFrom]        = useState('2026-07-01');
+  const [dateTo,          setDateTo]          = useState('2026-07-31');
 
   const contentRef = useRef();
 
@@ -344,9 +344,9 @@ export default function SummaryView({ refreshKey = 0 }) {
           </div>
 
           {/* Reset */}
-          {(selSup || onlyNewHR || dateFrom !== todayISO() || dateTo !== todayISO()) && (
+          {(selSup || onlyNewHR || dateFrom !== '2026-07-01' || dateTo !== '2026-07-31') && (
             <button
-              onClick={() => { setSelSup(''); setOnlyNewHR(false); setDateFrom(todayISO()); setDateTo(todayISO()); }}
+              onClick={() => { setSelSup(''); setOnlyNewHR(false); setDateFrom('2026-07-01'); setDateTo('2026-07-31'); }}
               className="pb-0.5 text-xs text-slate-400 hover:text-rose-600 transition-colors underline font-medium"
             >
               Đặt lại bộ lọc
@@ -579,6 +579,7 @@ const PROJECT_COLORS = {
   'BHX':          { badge: 'bg-teal-100 text-teal-950 border-teal-300 font-bold',        label: 'bg-teal-600 text-white' },
   'MEGA NPL':     { badge: 'bg-pink-100 text-pink-950 border-pink-300 font-bold',        label: 'bg-pink-600 text-white' },
   'MEGA LAUNDRY': { badge: 'bg-fuchsia-100 text-fuchsia-950 border-fuchsia-300 font-bold', label: 'bg-fuchsia-600 text-white' },
+  'HOMECARE':     { badge: 'bg-orange-100 text-orange-950 border-orange-300 font-bold',  label: 'bg-orange-600 text-white' },
 };
 
 function getProjColor(proj) {

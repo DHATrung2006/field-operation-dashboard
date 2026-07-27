@@ -132,7 +132,7 @@ export default function SummaryView({ refreshKey = 0 }) {
     return list;
   }, [allStoresList, selSup, onlyNewHR]);
 
-  /* ── Daily roster rows filtered by date range (string compare = no timezone bug) ── */
+  /* ── Daily roster rows filtered by date range and WORKING SHIFTS ONLY ── */
   const rosterRows = useMemo(() => {
     const rows = [];
     filteredStores.forEach(s => {
@@ -141,7 +141,10 @@ export default function SummaryView({ refreshKey = 0 }) {
         // Safe string comparison: "2026-07-27" >= "2026-07-27" works correctly
         if (dateFrom && sh.dateISO < dateFrom) return;
         if (dateTo   && sh.dateISO > dateTo)   return;
+        
         const isOff = !sh.time || sh.time.toLowerCase().includes('off') || sh.time.toLowerCase().includes('nghỉ');
+        if (isOff || !sh.time.trim()) return; // ONLY KEEP WORKING SHIFTS
+
         rows.push({
           storeName: s.name,
           project:   sh.project || s.project,
@@ -149,10 +152,10 @@ export default function SummaryView({ refreshKey = 0 }) {
           region:    s.region,
           province:  s.province,
           sup:       sh.sup || s.sup,
-          shift:     sh.time || 'Off lịch',
+          shift:     sh.time,
           dateRaw:   sh.dateRaw,
           dateISO:   sh.dateISO,
-          isWorking: !isOff && Boolean(sh.time),
+          isWorking: true,
           isNewHR:   s.isNewHR,
         });
       });
@@ -162,8 +165,8 @@ export default function SummaryView({ refreshKey = 0 }) {
     return rows;
   }, [filteredStores, dateFrom, dateTo]);
 
-  const activeCount = rosterRows.filter(r => r.isWorking).length;
-  const offCount    = rosterRows.filter(r => !r.isWorking).length;
+  const activeCount = rosterRows.length;
+  const offCount    = 0;
 
   /* ── Projects that have at least 1 shift in selected date range ──── */
   const activeProjSet = useMemo(() => {
@@ -443,8 +446,7 @@ export default function SummaryView({ refreshKey = 0 }) {
             <span className="font-mono text-blue-600">{dateFrom}{dateTo !== dateFrom ? ` → ${dateTo}` : ''}</span>
           </h3>
           <div className="flex items-center gap-2 text-xs font-bold">
-            <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1 rounded-full">✓ Đang làm: {activeCount}</span>
-            <span className="bg-slate-100 text-slate-500 border border-slate-200 px-3 py-1 rounded-full">Off: {offCount}</span>
+            <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1 rounded-full">✓ Tổng ca làm việc: {rosterRows.length}</span>
           </div>
         </div>
 
@@ -565,7 +567,7 @@ function RosterTable({ title, colorBg, colorBorder, colorText, rows, dateFrom, d
         <div className="flex items-center gap-3">
           <h4 className={`text-base font-extrabold ${colorText}`}>{title}</h4>
           <span className="bg-white/80 text-slate-700 border border-slate-200 px-2.5 py-0.5 rounded-full text-xs font-bold shadow-xs">
-            {filtered.length} ca làm ({activeCount} đang làm)
+            {filtered.length} ca làm việc
           </span>
         </div>
         <div className="flex items-center gap-2">

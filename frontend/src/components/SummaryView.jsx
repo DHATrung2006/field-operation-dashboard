@@ -3,23 +3,28 @@ import { fetchMasterData, fetchHRStatus, normalizeRegion, getSups } from '../api
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
-/* ─── Helper: parse "Thứ Sáu, 3 tháng 7, 2026" → Date ─────────────── */
-function parseVNDate(str) {
+/**
+ * Parse Vietnamese date string "Thứ Sáu, 3 tháng 7, 2026" → "YYYY-MM-DD" string.
+ * We intentionally return a string (not a Date object) to avoid UTC timezone
+ * issues where new Date("YYYY-MM-DD") is parsed as UTC midnight = 07:00 Vietnam.
+ */
+function parseVNDateISO(str) {
   if (!str) return null;
   const m = str.match(/(\d+)\s+tháng\s+(\d+),\s+(\d+)/);
   if (!m) return null;
-  return new Date(+m[3], +m[2] - 1, +m[1]);
+  const year  = m[3];
+  const month = String(+m[2]).padStart(2, '0');
+  const day   = String(+m[1]).padStart(2, '0');
+  return `${year}-${month}-${day}`; // "2026-07-27"
 }
 
-/* ─── Format Date object → "YYYY-MM-DD" ────────────────────────────── */
-function toISO(d) {
-  if (!d) return '';
-  return d.toISOString().slice(0, 10);
-}
-
-/* ─── Today as "YYYY-MM-DD" ─────────────────────────────────────────── */
+/* ─── Today as "YYYY-MM-DD" (local time, no UTC shift) ─────────────── */
 function todayISO() {
-  return toISO(new Date());
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 export default function SummaryView() {
@@ -77,10 +82,10 @@ export default function SummaryView() {
         };
       }
       if (r['Date']) {
-        const dateObj = parseVNDate(r['Date']);
+        const dateISO = parseVNDateISO(r['Date']);
         map[key].shifts.push({
-          dateObj,
-          dateRaw: r['Date'],
+          dateISO,             // "YYYY-MM-DD" string for safe range comparison
+          dateRaw: r['Date'],  // Original Vietnamese string for display
           time:    r['Working Time'] || '',
           status:  r['Status'] || '',
         });
@@ -91,9 +96,8 @@ export default function SummaryView() {
 
   const allStoresList = useMemo(() => Object.values(allStoresMap), [allStoresMap]);
 
-  /* ── Date range filter ───────────────────────────────────────────── */
-  const fromDate = useMemo(() => dateFrom ? new Date(dateFrom) : null, [dateFrom]);
-  const toDate   = useMemo(() => dateTo   ? new Date(dateTo + 'T23:59:59') : null, [dateTo]);
+  /* ── Date range: compare as "YYYY-MM-DD" strings (no timezone issue) ── */
+  // No conversion needed — dateFrom/dateTo are already "YYYY-MM-DD" from <input type="date">
 
   /* ── Filtered stores (by SUP + HR checkbox) ─────────────────────── */
   const filteredStores = useMemo(() => {
@@ -103,14 +107,15 @@ export default function SummaryView() {
     return list;
   }, [allStoresList, selSup, onlyNewHR]);
 
-  /* ── Daily roster rows filtered by date range ───────────────────── */
+  /* ── Daily roster rows filtered by date range (string compare = no timezone bug) ── */
   const rosterRows = useMemo(() => {
     const rows = [];
     filteredStores.forEach(s => {
       s.shifts.forEach(sh => {
-        if (!sh.dateObj) return;
-        if (fromDate && sh.dateObj < fromDate) return;
-        if (toDate   && sh.dateObj > toDate)   return;
+        if (!sh.dateISO) return;
+        // Safe string comparison: "2026-07-27" >= "2026-07-27" works correctly
+        if (dateFrom && sh.dateISO < dateFrom) return;
+        if (dateTo   && sh.dateISO > dateTo)   return;
         const isOff = !sh.time || sh.time.toLowerCase().includes('off') || sh.time.toLowerCase().includes('nghỉ');
         rows.push({
           storeName: s.name,
@@ -121,15 +126,16 @@ export default function SummaryView() {
           sup:       s.sup,
           shift:     sh.time || 'Off lịch',
           dateRaw:   sh.dateRaw,
-          dateObj:   sh.dateObj,
+          dateISO:   sh.dateISO,
           isWorking: !isOff && Boolean(sh.time),
           isNewHR:   s.isNewHR,
         });
       });
     });
-    rows.sort((a, b) => a.dateObj - b.dateObj);
+    // Sort by ISO string = correct chronological order
+    rows.sort((a, b) => a.dateISO.localeCompare(b.dateISO));
     return rows;
-  }, [filteredStores, fromDate, toDate]);
+  }, [filteredStores, dateFrom, dateTo]);
 
   const activeCount = rosterRows.filter(r => r.isWorking).length;
   const offCount    = rosterRows.filter(r => !r.isWorking).length;
@@ -431,7 +437,7 @@ export default function SummaryView() {
                 </tr>
               ) : (
                 rosterRows.map((row, i) => (
-                  <tr key={`${row.storeName}-${i}`} className={`hover:bg-blue-50/20 transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}`}>
+                  <tr key={`${row.dateISO}-${row.storeName}-${i}`} className={`hover:bg-blue-50/20 transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}`}>
                     <td className="px-4 py-2.5 font-mono text-xs text-slate-500 whitespace-nowrap">{row.dateRaw}</td>
                     <td className="px-4 py-2.5 font-bold text-slate-800 whitespace-nowrap">
                       <div className="flex items-center gap-1.5">

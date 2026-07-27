@@ -33,10 +33,11 @@ export default function SummaryView() {
   const [loading,    setLoading]    = useState(true);
 
   /* Filters */
-  const [selSup,    setSelSup]    = useState('');
-  const [onlyNewHR, setOnlyNewHR] = useState(false);
-  const [dateFrom,  setDateFrom]  = useState(todayISO());
-  const [dateTo,    setDateTo]    = useState(todayISO());
+  const [selSup,          setSelSup]          = useState('');
+  const [onlyNewHR,       setOnlyNewHR]       = useState(false);
+  const [onlyActiveProj,  setOnlyActiveProj]  = useState(false);
+  const [dateFrom,        setDateFrom]        = useState(todayISO());
+  const [dateTo,          setDateTo]          = useState(todayISO());
 
   const contentRef = useRef();
 
@@ -140,6 +141,13 @@ export default function SummaryView() {
   const activeCount = rosterRows.filter(r => r.isWorking).length;
   const offCount    = rosterRows.filter(r => !r.isWorking).length;
 
+  /* ── Projects that have at least 1 shift in selected date range ──── */
+  const activeProjSet = useMemo(() => {
+    const s = new Set();
+    rosterRows.forEach(r => s.add(r.project));
+    return s;
+  }, [rosterRows]);
+
   /* ── Project Coverage Blocks ─────────────────────────────────────── */
   const projectBlocks = useMemo(() => {
     const map = {};
@@ -147,12 +155,13 @@ export default function SummaryView() {
       const p = s.project || '—';
       if (!map[p]) {
         map[p] = {
-          project: p,
-          brands:  new Set(),
-          total:   0,
-          hcm:     0,
-          hn:      0,
-          tinh:    0,
+          project:  p,
+          brands:   new Set(),
+          total:    0,
+          hcm:      0,
+          hn:       0,
+          tinh:     0,
+          isActive: activeProjSet.has(p),
         };
       }
       if (s.brand && s.brand !== '—') map[p].brands.add(s.brand);
@@ -161,8 +170,14 @@ export default function SummaryView() {
       else if (s.region === 'HN')  map[p].hn++;
       else                          map[p].tinh++;
     });
-    return Object.values(map).sort((a, b) => b.total - a.total);
-  }, [filteredStores]);
+    const all = Object.values(map).sort((a, b) => b.total - a.total);
+    return onlyActiveProj ? all.filter(p => p.isActive) : all;
+  }, [filteredStores, activeProjSet, onlyActiveProj]);
+
+  /* ── Roster split by region ──────────────────────────────────────── */
+  const rosterHCM  = useMemo(() => rosterRows.filter(r => r.region === 'HCM'),  [rosterRows]);
+  const rosterHN   = useMemo(() => rosterRows.filter(r => r.region === 'HN'),   [rosterRows]);
+  const rosterTinh = useMemo(() => rosterRows.filter(r => r.region !== 'HCM' && r.region !== 'HN'), [rosterRows]);
 
   /* ── PDF Export ─────────────────────────────────────────────────── */
   const exportPDF = async () => {
@@ -303,35 +318,56 @@ export default function SummaryView() {
 
       {/* ── Project Coverage Blocks ──────────────────────────────────── */}
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-        <div className="bg-slate-50/80 px-5 py-3.5 border-b border-slate-200 flex items-center justify-between">
+        <div className="bg-slate-50/80 px-5 py-3.5 border-b border-slate-200 flex items-center justify-between flex-wrap gap-3">
           <div>
             <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
               <i className="fa-solid fa-layer-group text-violet-600" />
               Số Lượng BA &amp; Độ Phủ Theo Dự Án (HCM / HN / Tỉnh)
             </h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              Mỗi block = 1 dự án · Bộ lọc Supervisor ở trên ảnh hưởng trực tiếp đến các con số này
+              Mỗi block = 1 dự án · Bộ lọc SUP ảnh hưởng trực tiếp đến các con số
             </p>
           </div>
-          <span className="bg-violet-100 text-violet-700 border border-violet-200 px-2.5 py-1 rounded-full text-xs font-bold">
-            {projectBlocks.length} dự án
-          </span>
+          <div className="flex items-center gap-2">
+            {/* Toggle chỉ hiện dự án còn hoạt động */}
+            <button
+              onClick={() => setOnlyActiveProj(v => !v)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${
+                onlyActiveProj
+                  ? 'bg-emerald-500 text-white border-emerald-500 shadow-sm'
+                  : 'bg-white text-slate-500 border-slate-300 hover:border-emerald-400 hover:text-emerald-600'
+              }`}
+              title="Dự án còn hoạt động = có ít nhất 1 ca làm trong khoảng ngày đang chọn"
+            >
+              <span className={`w-2 h-2 rounded-full ${onlyActiveProj ? 'bg-white animate-pulse' : 'bg-slate-300'}`} />
+              {onlyActiveProj ? `Đang hoạt động (${activeProjSet.size})` : 'Tất cả dự án'}
+            </button>
+            <span className="bg-violet-100 text-violet-700 border border-violet-200 px-2.5 py-1 rounded-full text-xs font-bold">
+              {projectBlocks.length} / {activeProjSet.size} dự án active
+            </span>
+          </div>
         </div>
 
         <div className="p-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-            {projectBlocks.map((p, idx) => {
-              const maxVal = Math.max(p.hcm, p.hn, p.tinh, 1);
-              const pctHCM  = Math.round((p.hcm  / maxVal) * 100);
-              const pctHN   = Math.round((p.hn   / maxVal) * 100);
-              const pctTinh = Math.round((p.tinh / maxVal) * 100);
+            {projectBlocks.map((p) => {
+              const maxVal   = Math.max(p.hcm, p.hn, p.tinh, 1);
+              const pctHCM   = Math.round((p.hcm  / maxVal) * 100);
+              const pctHN    = Math.round((p.hn   / maxVal) * 100);
+              const pctTinh  = Math.round((p.tinh / maxVal) * 100);
               const brandStr = [...p.brands].join(' · ') || '—';
               return (
                 <div key={p.project} className="border border-slate-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-                  {/* Block Header – Project Name & Brand */}
-                  <div className="bg-gradient-to-r from-slate-700 to-slate-800 px-4 py-3 flex items-center justify-between">
+                  {/* Block Header */}
+                  <div className={`px-4 py-3 flex items-center justify-between ${p.isActive ? 'bg-gradient-to-r from-slate-700 to-slate-800' : 'bg-gradient-to-r from-slate-400 to-slate-500'}`}>
                     <div>
-                      <div className="text-sm font-extrabold text-white tracking-wide">{p.project}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-extrabold text-white tracking-wide">{p.project}</span>
+                        {p.isActive
+                          ? <span className="bg-emerald-400/30 text-emerald-200 border border-emerald-400/40 px-1.5 py-0.5 rounded text-[10px] font-bold">● Đang chạy</span>
+                          : <span className="bg-slate-300/30 text-slate-200 border border-slate-300/40 px-1.5 py-0.5 rounded text-[10px] font-bold">Hết chương trình</span>
+                        }
+                      </div>
                       <div className="text-[11px] text-slate-300 font-medium mt-0.5">
                         <i className="fa-solid fa-tag mr-1 opacity-70" />{brandStr}
                       </div>
@@ -342,48 +378,28 @@ export default function SummaryView() {
                     </div>
                   </div>
 
-                  {/* Coverage rows */}
+                  {/* Coverage bars */}
                   <div className="bg-white px-4 py-3 space-y-2.5">
-                    {/* HCM */}
                     <div>
                       <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
-                          <span className="text-xs font-bold text-slate-600">HCM</span>
-                        </div>
+                        <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-blue-500" /><span className="text-xs font-bold text-slate-600">HCM</span></div>
                         <span className="text-xs font-extrabold text-blue-700">{p.hcm} BA</span>
                       </div>
-                      <div className="h-2 bg-blue-50 rounded-full overflow-hidden border border-blue-100">
-                        <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${pctHCM}%` }} />
-                      </div>
+                      <div className="h-2 bg-blue-50 rounded-full overflow-hidden border border-blue-100"><div className="h-full bg-blue-500 rounded-full" style={{ width: `${pctHCM}%` }} /></div>
                     </div>
-
-                    {/* HN */}
                     <div>
                       <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-2.5 h-2.5 rounded-full bg-indigo-500" />
-                          <span className="text-xs font-bold text-slate-600">HN</span>
-                        </div>
+                        <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-indigo-500" /><span className="text-xs font-bold text-slate-600">HN</span></div>
                         <span className="text-xs font-extrabold text-indigo-700">{p.hn} BA</span>
                       </div>
-                      <div className="h-2 bg-indigo-50 rounded-full overflow-hidden border border-indigo-100">
-                        <div className="h-full bg-indigo-500 rounded-full transition-all" style={{ width: `${pctHN}%` }} />
-                      </div>
+                      <div className="h-2 bg-indigo-50 rounded-full overflow-hidden border border-indigo-100"><div className="h-full bg-indigo-500 rounded-full" style={{ width: `${pctHN}%` }} /></div>
                     </div>
-
-                    {/* Tỉnh */}
                     <div>
                       <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                          <span className="text-xs font-bold text-slate-600">Tỉnh</span>
-                        </div>
+                        <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /><span className="text-xs font-bold text-slate-600">Tỉnh</span></div>
                         <span className="text-xs font-extrabold text-emerald-700">{p.tinh} BA</span>
                       </div>
-                      <div className="h-2 bg-emerald-50 rounded-full overflow-hidden border border-emerald-100">
-                        <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${pctTinh}%` }} />
-                      </div>
+                      <div className="h-2 bg-emerald-50 rounded-full overflow-hidden border border-emerald-100"><div className="h-full bg-emerald-500 rounded-full" style={{ width: `${pctTinh}%` }} /></div>
                     </div>
                   </div>
                 </div>
@@ -393,88 +409,53 @@ export default function SummaryView() {
         </div>
       </div>
 
-      {/* ── Daily Roster Table ───────────────────────────────────────── */}
-      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-        <div className="bg-slate-50/80 px-5 py-3.5 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2">
-          <div>
-            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-              <i className="fa-solid fa-list-check text-blue-600" />
-              Chi Tiết Lịch Phân Ca
-              <span className="font-mono text-blue-600 text-sm">
-                {dateFrom}{dateTo !== dateFrom ? ` → ${dateTo}` : ''}
-              </span>
-            </h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Hiển thị {rosterRows.length} bản ghi phân ca trong khoảng ngày đã chọn
-            </p>
-          </div>
+      {/* ── Daily Roster Tables split by Region ──────────────────────── */}
+      <div className="space-y-4">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+            <i className="fa-solid fa-list-check text-blue-600" />
+            Chi Tiết Lịch Phân Ca
+            <span className="font-mono text-blue-600">{dateFrom}{dateTo !== dateFrom ? ` → ${dateTo}` : ''}</span>
+          </h3>
           <div className="flex items-center gap-2 text-xs font-bold">
-            <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1 rounded-full">
-              ✓ Đang làm: {activeCount}
-            </span>
-            <span className="bg-slate-100 text-slate-500 border border-slate-200 px-3 py-1 rounded-full">
-              Off lịch: {offCount}
-            </span>
+            <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1 rounded-full">✓ Đang làm: {activeCount}</span>
+            <span className="bg-slate-100 text-slate-500 border border-slate-200 px-3 py-1 rounded-full">Off: {offCount}</span>
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-sm">
-            <thead>
-              <tr className="bg-slate-100/70 border-b border-slate-200 text-left">
-                {['Ngày', 'Tên Siêu Thị', 'Project', 'Brand', 'Region', 'Province', 'Supervisor', 'Ca Làm', 'Status'].map(h => (
-                  <th key={h} className="px-4 py-3 text-[11px] font-bold text-slate-600 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {rosterRows.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="p-8 text-center text-slate-400">
-                    <i className="fa-solid fa-calendar-xmark text-2xl mb-2 block opacity-30" />
-                    Không có dữ liệu trong khoảng ngày {dateFrom} → {dateTo}
-                  </td>
-                </tr>
-              ) : (
-                rosterRows.map((row, i) => (
-                  <tr key={`${row.dateISO}-${row.storeName}-${i}`} className={`hover:bg-blue-50/20 transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}`}>
-                    <td className="px-4 py-2.5 font-mono text-xs text-slate-500 whitespace-nowrap">{row.dateISO ? row.dateISO.slice(8,10) + '/' + row.dateISO.slice(5,7) + '/' + row.dateISO.slice(2,4) : ''}</td>
-                    <td className="px-4 py-2.5 font-bold text-slate-800 whitespace-nowrap">
-                      <div className="flex items-center gap-1.5">
-                        {row.storeName}
-                        {row.isNewHR && (
-                          <span className="bg-amber-100 text-amber-700 border border-amber-300 px-1.5 py-0.5 rounded text-[10px] font-extrabold whitespace-nowrap" title="Siêu thị đang có vị trí BA trống cần tuyển dụng theo HR_Status">
-                            TUYỂN MỚI
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-2.5 text-slate-700 font-semibold whitespace-nowrap">{row.project}</td>
-                    <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">{row.brand}</td>
-                    <td className="px-4 py-2.5">
-                      <RegionBadge region={row.region} />
-                    </td>
-                    <td className="px-4 py-2.5 text-slate-600 font-medium whitespace-nowrap">{row.province}</td>
-                    <td className="px-4 py-2.5 text-slate-700 whitespace-nowrap">{row.sup}</td>
-                    <td className="px-4 py-2.5 font-mono font-semibold text-slate-800 whitespace-nowrap">{row.shift}</td>
-                    <td className="px-4 py-2.5 whitespace-nowrap">
-                      {row.isWorking ? (
-                        <span className="inline-flex items-center gap-1.5 bg-emerald-100 text-emerald-800 border border-emerald-200 px-2.5 py-1 rounded-full text-xs font-bold">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
-                          Đang làm
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-500 border border-slate-200 px-2.5 py-1 rounded-full text-xs font-medium">
-                          Off lịch
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+        {/* HCM */}
+        <RosterTable
+          title="🔵 HCM"
+          colorBg="bg-blue-50"
+          colorBorder="border-blue-200"
+          colorText="text-blue-800"
+          rows={rosterHCM}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+        />
+
+        {/* HN */}
+        <RosterTable
+          title="🟣 Hà Nội"
+          colorBg="bg-indigo-50"
+          colorBorder="border-indigo-200"
+          colorText="text-indigo-800"
+          rows={rosterHN}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+        />
+
+        {/* Tỉnh */}
+        <RosterTable
+          title="🟢 Tỉnh / Miền"
+          colorBg="bg-emerald-50"
+          colorBorder="border-emerald-200"
+          colorText="text-emerald-800"
+          rows={rosterTinh}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+        />
       </div>
     </div>
   );
@@ -516,6 +497,153 @@ function LoadingSpinner() {
     <div className="flex flex-col items-center justify-center py-24 gap-4">
       <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
       <p className="text-slate-500 text-sm font-medium">Đang tải dữ liệu Summary...</p>
+    </div>
+  );
+}
+
+function RosterTable({ title, colorBg, colorBorder, colorText, rows, dateFrom, dateTo }) {
+  const [search, setSearch] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 15;
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return rows;
+    const q = search.toLowerCase();
+    return rows.filter(r =>
+      (r.storeName || '').toLowerCase().includes(q) ||
+      (r.project || '').toLowerCase().includes(q) ||
+      (r.brand || '').toLowerCase().includes(q) ||
+      (r.sup || '').toLowerCase().includes(q) ||
+      (r.province || '').toLowerCase().includes(q)
+    );
+  }, [rows, search]);
+
+  const totalPages = Math.ceil(filtered.length / pageSize) || 1;
+  const pageRows = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, currentPage, pageSize]);
+
+  const activeCount = filtered.filter(r => r.isWorking).length;
+
+  const formatDateDDMMYY = (dateISO) => {
+    if (!dateISO) return '—';
+    const parts = dateISO.split('-');
+    if (parts.length !== 3) return dateISO;
+    const [y, m, d] = parts;
+    return `${d}/${m}/${y.slice(2)}`;
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+      {/* Table Header */}
+      <div className={`${colorBg} px-5 py-3.5 border-b ${colorBorder} flex items-center justify-between flex-wrap gap-3`}>
+        <div className="flex items-center gap-3">
+          <h4 className={`text-base font-extrabold ${colorText}`}>{title}</h4>
+          <span className="bg-white/80 text-slate-700 border border-slate-200 px-2.5 py-0.5 rounded-full text-xs font-bold shadow-xs">
+            {filtered.length} ca làm ({activeCount} đang làm)
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <i className="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs" />
+            <input
+              type="text"
+              placeholder="Tìm siêu thị, dự án, SUP..."
+              value={search}
+              onChange={e => { setSearch(e.target.value); setCurrentPage(1); }}
+              className="pl-8 pr-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 w-52 font-medium"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Table Body */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-xs border-collapse">
+          <thead>
+            <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider text-[11px]">
+              <th className="py-3 px-4">Ngày</th>
+              <th className="py-3 px-4">Tên Siêu Thị</th>
+              <th className="py-3 px-4">Project</th>
+              <th className="py-3 px-4">Brand</th>
+              <th className="py-3 px-4">Tỉnh / Thành</th>
+              <th className="py-3 px-4">Supervisor</th>
+              <th className="py-3 px-4">Ca Làm</th>
+              <th className="py-3 px-4 text-center">Status</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
+            {pageRows.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="py-8 text-center text-slate-400 italic">
+                  Không có lịch phân ca phù hợp
+                </td>
+              </tr>
+            ) : (
+              pageRows.map((r, idx) => (
+                <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                  <td className="py-2.5 px-4 font-mono font-bold text-slate-600 whitespace-nowrap">
+                    {formatDateDDMMYY(r.dateISO)}
+                  </td>
+                  <td className="py-2.5 px-4 font-bold text-slate-900">
+                    <div className="flex items-center gap-2">
+                      <span>{r.storeName}</span>
+                      {r.isNewHR && (
+                        <span className="bg-amber-100 text-amber-800 border border-amber-300 text-[10px] font-extrabold px-1.5 py-0.5 rounded shadow-2xs whitespace-nowrap">
+                          + NV Mới
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="py-2.5 px-4 font-semibold text-slate-700">{r.project}</td>
+                  <td className="py-2.5 px-4 text-slate-500">{r.brand}</td>
+                  <td className="py-2.5 px-4 text-slate-600">{r.province}</td>
+                  <td className="py-2.5 px-4 text-slate-600 font-medium">{r.sup}</td>
+                  <td className="py-2.5 px-4 font-mono text-slate-800 font-semibold">{r.shift}</td>
+                  <td className="py-2.5 px-4 text-center whitespace-nowrap">
+                    {r.isWorking ? (
+                      <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 border border-emerald-200 px-2.5 py-0.5 rounded-full text-[11px] font-bold">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Đang làm
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-500 border border-slate-200 px-2.5 py-0.5 rounded-full text-[11px] font-medium">
+                        Off lịch
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pagination Footer */}
+      {totalPages > 1 && (
+        <div className="px-5 py-3 border-t border-slate-200 bg-slate-50/50 flex items-center justify-between">
+          <div className="text-xs text-slate-500 font-medium">
+            Trang <span className="font-bold text-slate-800">{currentPage}</span> / {totalPages}
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              disabled={currentPage === 1}
+              onClick={() => setCurrentPage(p => p - 1)}
+              className="px-2.5 py-1 text-xs border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed font-semibold"
+            >
+              Trước
+            </button>
+            <button
+              disabled={currentPage === totalPages}
+              onClick={() => setCurrentPage(p => p + 1)}
+              className="px-2.5 py-1 text-xs border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed font-semibold"
+            >
+              Sau
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

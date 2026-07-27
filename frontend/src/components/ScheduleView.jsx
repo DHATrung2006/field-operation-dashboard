@@ -19,7 +19,7 @@ const QC_CLR = s => {
   return 'text-rose-700 bg-rose-100';
 };
 
-export default function ScheduleView() {
+export default function ScheduleView({ refreshKey = 0 }) {
   const [masterRows, setMasterRows] = useState([]);
   const [qcRows,     setQcRows]     = useState([]);
   const [loading,    setLoading]    = useState(true);
@@ -32,12 +32,13 @@ export default function ScheduleView() {
 
   useEffect(() => {
     setLoading(true);
-    Promise.all([fetchMasterData(), fetchQCData()]).then(([master, qc]) => {
+    const force = refreshKey > 0;
+    Promise.all([fetchMasterData(force), fetchQCData(force)]).then(([master, qc]) => {
       setMasterRows(master);
       setQcRows(qc);
       setLoading(false);
     });
-  }, []);
+  }, [refreshKey]);
 
   // QC per store (latest)
   const qcByStore = useMemo(() => {

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import './index.css';
 import { onAuthStateChangedListener, signOutUser } from './firebase';
+import { clearSheetCache } from './api/googleSheets';
 import LoginOverlay from './components/LoginOverlay';
 import Header      from './components/Header';
 import SummaryView  from './components/SummaryView';
@@ -9,8 +10,11 @@ import HRView       from './components/HRView';
 import ReportView   from './components/ReportView';
 
 function App() {
-  const [user,      setUser]      = useState(null);
-  const [activeTab, setActiveTab] = useState('summary');
+  const [user,         setUser]         = useState(null);
+  const [activeTab,    setActiveTab]    = useState('summary');
+  const [refreshKey,   setRefreshKey]   = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [toastMsg,     setToastMsg]     = useState('');
 
   useEffect(() => {
     const unsubscribe = onAuthStateChangedListener((u) => {
@@ -24,26 +28,54 @@ function App() {
     setUser(null);
   };
 
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    clearSheetCache();
+    setRefreshKey(prev => prev + 1);
+
+    setTimeout(() => {
+      setIsRefreshing(false);
+      setToastMsg('✅ Đã cập nhật dữ liệu mới nhất từ Google Sheet!');
+      setTimeout(() => setToastMsg(''), 4000);
+    }, 800);
+  };
+
   if (!user) {
     return <LoginOverlay onLoginSuccess={(u) => setUser(u)} />;
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
-      <Header user={user} onLogout={handleLogout} activeTab={activeTab} onTabChange={setActiveTab} />
+    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans relative">
+      <Header
+        user={user}
+        onLogout={handleLogout}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        onRefresh={handleRefresh}
+        isRefreshing={isRefreshing}
+      />
+
+      {/* Toast Notification */}
+      {toastMsg && (
+        <div className="fixed top-16 right-6 z-50 bg-emerald-700 text-white px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2 text-xs font-bold animate-bounce">
+          <i className="fa-solid fa-circle-check text-emerald-300 text-sm" />
+          <span>{toastMsg}</span>
+        </div>
+      )}
 
       <main className="flex-1 p-5 max-w-[1400px] w-full mx-auto">
         {/* ── Tab 1: Summary ── */}
-        {activeTab === 'summary'  && <SummaryView />}
+        {activeTab === 'summary'  && <SummaryView refreshKey={refreshKey} />}
 
         {/* ── Tab 2: Lịch làm BA ── */}
-        {activeTab === 'schedule' && <ScheduleView />}
+        {activeTab === 'schedule' && <ScheduleView refreshKey={refreshKey} />}
 
         {/* ── Tab 3: HR ── */}
-        {activeTab === 'hr'       && <HRView />}
+        {activeTab === 'hr'       && <HRView refreshKey={refreshKey} />}
 
         {/* ── Tab 4: Báo cáo / UFF ── */}
-        {activeTab === 'report'   && <ReportView />}
+        {activeTab === 'report'   && <ReportView refreshKey={refreshKey} />}
       </main>
 
       {/* Footer */}

@@ -67,18 +67,37 @@ function parseCSV(text) {
 }
 
 /**
+ * Clear all localStorage cache keys for Google Sheets
+ */
+export function clearSheetCache() {
+  try {
+    Object.keys(localStorage).forEach(k => {
+      if (k.startsWith('gs_cache_')) localStorage.removeItem(k);
+    });
+  } catch (_) {}
+}
+
+/**
  * Fetch sheet data via direct CSV endpoint with < 1s latency
  */
-async function fetchSheetData(sheetName) {
+async function fetchSheetData(sheetName, force = false) {
   const cacheKey = `gs_cache_${sheetName}`;
+  if (force) {
+    try { localStorage.removeItem(cacheKey); } catch (_) {}
+  }
   
   // 1. Try Direct Google Sheets CSV Endpoint (Fastest: ~400-800ms)
   try {
-    const url = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}&t=${Date.now()}`;
+    const ts = Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+    const url = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}&t=${ts}`;
     const ctrl = new AbortController();
     const tid = setTimeout(() => ctrl.abort(), 6000); // 6s timeout max
 
-    const res = await fetch(url, { signal: ctrl.signal, cache: 'no-cache' });
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      cache: force ? 'no-store' : 'no-cache',
+      headers: force ? { 'Pragma': 'no-cache', 'Cache-Control': 'no-cache' } : {}
+    });
     clearTimeout(tid);
 
     if (res.ok) {
@@ -96,11 +115,12 @@ async function fetchSheetData(sheetName) {
 
   // 2. Fallback to Google Apps Script Endpoint
   try {
-    const url = `${APPS_SCRIPT_URL}?action=getData&sheet=${encodeURIComponent(sheetName)}`;
+    const ts = Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+    const url = `${APPS_SCRIPT_URL}?action=getData&sheet=${encodeURIComponent(sheetName)}&t=${ts}`;
     const ctrl = new AbortController();
     const tid = setTimeout(() => ctrl.abort(), 15000);
 
-    const res = await fetch(url, { signal: ctrl.signal });
+    const res = await fetch(url, { signal: ctrl.signal, cache: force ? 'no-store' : 'no-cache' });
     clearTimeout(tid);
     const data = await res.json();
     if (Array.isArray(data) && data.length > 0) {
@@ -121,28 +141,28 @@ async function fetchSheetData(sheetName) {
 }
 
 // ─── master_data ──────────────────────────────────────────────────────────
-export async function fetchMasterData() {
-  return fetchSheetData('master_data');
+export async function fetchMasterData(force = false) {
+  return fetchSheetData('master_data', force);
 }
 
 // ─── HR_Status ────────────────────────────────────────────────────────────
-export async function fetchHRStatus() {
-  return fetchSheetData('HR_Status');
+export async function fetchHRStatus(force = false) {
+  return fetchSheetData('HR_Status', force);
 }
 
 // ─── QC ───────────────────────────────────────────────────────────────────
-export async function fetchQCData() {
-  return fetchSheetData('QC');
+export async function fetchQCData(force = false) {
+  return fetchSheetData('QC', force);
 }
 
 // ─── Vinda_july ───────────────────────────────────────────────────────────
-export async function fetchVindaData() {
-  return fetchSheetData('Vinda_july');
+export async function fetchVindaData(force = false) {
+  return fetchSheetData('Vinda_july', force);
 }
 
 // ─── P&G ──────────────────────────────────────────────────────────────────
-export async function fetchPGData() {
-  return fetchSheetData('P&G');
+export async function fetchPGData(force = false) {
+  return fetchSheetData('P&G', force);
 }
 
 /**

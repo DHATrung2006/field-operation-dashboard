@@ -13,7 +13,7 @@ const STATUS_STYLE = {
   Completed:     'bg-emerald-100 text-emerald-800 border-emerald-200',
 };
 
-export default function HRView() {
+export default function HRView({ refreshKey = 0 }) {
   const [rows,      setRows]      = useState([]);
   const [loading,   setLoading]   = useState(true);
   const [search,    setSearch]    = useState('');
@@ -23,8 +23,9 @@ export default function HRView() {
 
   useEffect(() => {
     setLoading(true);
-    fetchHRStatus().then(data => { setRows(data); setLoading(false); });
-  }, []);
+    const force = refreshKey > 0;
+    fetchHRStatus(force).then(data => { setRows(data); setLoading(false); });
+  }, [refreshKey]);
 
   // Column names from HR_Status sheet:
   // "Project","Mart Name","Brand","Sup","Loại Tuyển Dụng","Tình trạng Tuyển Dụng","Tình trạng shop",

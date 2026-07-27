@@ -27,7 +27,7 @@ function todayISO() {
   return `${y}-${m}-${day}`;
 }
 
-export default function SummaryView() {
+export default function SummaryView({ refreshKey = 0 }) {
   const [masterRows, setMasterRows] = useState([]);
   const [hrRows,     setHrRows]     = useState([]);
   const [loading,    setLoading]    = useState(true);
@@ -43,12 +43,13 @@ export default function SummaryView() {
 
   useEffect(() => {
     setLoading(true);
-    Promise.all([fetchMasterData(), fetchHRStatus()]).then(([master, hr]) => {
+    const force = refreshKey > 0;
+    Promise.all([fetchMasterData(force), fetchHRStatus(force)]).then(([master, hr]) => {
       setMasterRows(master);
       setHrRows(hr);
       setLoading(false);
     });
-  }, []);
+  }, [refreshKey]);
 
   /* ── Stores with active HR recruitment (Sourcing / Interviewing / etc.) ── */
   const hrStoreSet = useMemo(() => {

@@ -83,25 +83,27 @@ export default function SummaryView({ refreshKey = 0 }) {
   /* ── Supervisors list ────────────────────────────────────────────── */
   const sups = useMemo(() => getSups(masterRows), [masterRows]);
 
-  /* ── Build store map (unique store per Store Name) ─────────────── */
+  /* ── Build store-project placement map (unique per Store Name + Project) ── */
   const allStoresMap = useMemo(() => {
     const map = {};
     masterRows.forEach(r => {
       const storeName = (r['Store Name'] || r['Store Code'] || '').trim();
+      const proj      = (r['Project'] || '—').trim();
       if (!storeName) return;
-      const normKey = storeName.toLowerCase();
-      const reg = normalizeRegion(r['Region'], r['Province'], storeName);
+
+      const normKey = `${storeName.toLowerCase()}_${proj.toLowerCase()}`;
+      const reg     = normalizeRegion(r['Region'], r['Province'], storeName);
 
       if (!map[normKey]) {
         map[normKey] = {
           code:        (r['Store Code'] || '').trim(),
           name:        storeName,
-          project:     (r['Project'] || '—').trim(),
+          project:     proj,
           brand:       (r['Brand'] || '—').trim(),
           sup:         (r['Sup'] || '—').trim(),
           region:      reg,
           province:    (r['Province'] || '—').trim(),
-          isNewHR:     hrStoreSet.has(normKey),
+          isNewHR:     hrStoreSet.has(storeName.toLowerCase()),
           shifts:      [],
         };
       } else {
@@ -125,11 +127,11 @@ export default function SummaryView({ refreshKey = 0 }) {
       if (r['Date']) {
         const dateISO = parseVNDateISO(r['Date']);
         map[normKey].shifts.push({
-          dateISO,             // "YYYY-MM-DD" string for safe range comparison
-          dateRaw: r['Date'],  // Original Vietnamese string for display
+          dateISO,
+          dateRaw: r['Date'],
           time:    r['Working Time'] || '',
           status:  r['Status'] || '',
-          project: (r['Project'] || map[normKey].project).trim(),
+          project: proj,
           brand:   (r['Brand'] || map[normKey].brand).trim(),
           sup:     (r['Sup'] || map[normKey].sup).trim(),
         });

@@ -189,12 +189,32 @@ export default function SummaryView({ refreshKey = 0 }) {
   const activeCount = rosterRows.length;
   const offCount    = 0;
 
-  /* ── Projects that have at least 1 shift in selected date range ──── */
-  const activeProjSet = useMemo(() => {
-    const s = new Set();
-    rosterRows.forEach(r => s.add(r.project));
-    return s;
-  }, [rosterRows]);
+  /* ── Total unique physical supermarket stores count ────────────────── */
+  const uniqueStoreCount = useMemo(() => {
+    return new Set(filteredStores.map(s => s.name.toLowerCase())).size;
+  }, [filteredStores]);
+
+  /* ── Projects active in the next 2 months (today → today + 60 days) ──── */
+  const activeProjSet2Months = useMemo(() => {
+    const activeSet = new Set();
+    const today = todayISO();
+    const d = new Date();
+    d.setDate(d.getDate() + 60);
+    const next2MonthsISO = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+    allStoresList.forEach(s => {
+      s.shifts.forEach(sh => {
+        if (!sh.dateISO) return;
+        const isOff = !sh.time || sh.time.toLowerCase().includes('off') || sh.time.toLowerCase().includes('nghỉ');
+        if (isOff || !sh.time.trim()) return;
+
+        if (sh.dateISO >= today && sh.dateISO <= next2MonthsISO) {
+          activeSet.add(sh.project || s.project);
+        }
+      });
+    });
+    return activeSet;
+  }, [allStoresList]);
 
   /* ── Project Coverage Blocks ─────────────────────────────────────── */
   const projectBlocks = useMemo(() => {
@@ -209,7 +229,7 @@ export default function SummaryView({ refreshKey = 0 }) {
           hcm:      0,
           hn:       0,
           tinh:     0,
-          isActive: activeProjSet.has(p),
+          isActive: activeProjSet2Months.has(p),
         };
       }
       if (s.brand && s.brand !== '—') map[p].brands.add(s.brand);
@@ -220,7 +240,7 @@ export default function SummaryView({ refreshKey = 0 }) {
     });
     const all = Object.values(map).sort((a, b) => b.total - a.total);
     return onlyActiveProj ? all.filter(p => p.isActive) : all;
-  }, [filteredStores, activeProjSet, onlyActiveProj]);
+  }, [filteredStores, activeProjSet2Months, onlyActiveProj]);
 
   /* ── Roster split by region ──────────────────────────────────────── */
   const rosterHCM  = useMemo(() => rosterRows.filter(r => r.region === 'HCM'),  [rosterRows]);
@@ -344,16 +364,16 @@ export default function SummaryView({ refreshKey = 0 }) {
         <KpiCard
           gradient="from-blue-500 to-indigo-600"
           icon="fa-id-badge"
-          label="Tổng Số BA (Điểm Bán)"
-          value={filteredStores.length}
-          sub={selSup ? `Lọc theo SUP: ${selSup}` : 'Tất cả Supervisor'}
+          label="Tổng Số BA & Store Điểm Bán"
+          value={`${filteredStores.length} BA / ${uniqueStoreCount} Store`}
+          sub={selSup ? `Lọc theo SUP: ${selSup}` : `Tổng ${filteredStores.length} vị trí BA tại ${uniqueStoreCount} siêu thị`}
         />
         <KpiCard
           gradient="from-violet-500 to-purple-600"
           icon="fa-briefcase"
           label="Tổng Dự Án"
           value={projectBlocks.length}
-          sub="Đang vận hành"
+          sub={`Đang hoạt động: ${activeProjSet2Months.size} dự án`}
         />
         <KpiCard
           gradient="from-emerald-500 to-teal-600"
@@ -385,13 +405,13 @@ export default function SummaryView({ refreshKey = 0 }) {
                   ? 'bg-emerald-500 text-white border-emerald-500 shadow-sm'
                   : 'bg-white text-slate-500 border-slate-300 hover:border-emerald-400 hover:text-emerald-600'
               }`}
-              title="Dự án còn hoạt động = có ít nhất 1 ca làm trong khoảng ngày đang chọn"
+              title="Dự án còn hoạt động = có lịch phân ca trong vòng 2 tháng tới"
             >
               <span className={`w-2 h-2 rounded-full ${onlyActiveProj ? 'bg-white animate-pulse' : 'bg-slate-300'}`} />
-              {onlyActiveProj ? `Đang hoạt động (${activeProjSet.size})` : 'Tất cả dự án'}
+              {onlyActiveProj ? `Đang hoạt động (${activeProjSet2Months.size})` : 'Tất cả dự án'}
             </button>
             <span className="bg-violet-100 text-violet-700 border border-violet-200 px-2.5 py-1 rounded-full text-xs font-bold">
-              {projectBlocks.length} / {activeProjSet.size} dự án active
+              {projectBlocks.length} / {activeProjSet2Months.size} dự án active (2 tháng)
             </span>
           </div>
         </div>
@@ -412,8 +432,8 @@ export default function SummaryView({ refreshKey = 0 }) {
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-extrabold text-white tracking-wide">{p.project}</span>
                         {p.isActive
-                          ? <span className="bg-emerald-400/30 text-emerald-200 border border-emerald-400/40 px-1.5 py-0.5 rounded text-[10px] font-bold">● Có ca làm</span>
-                          : <span className="bg-slate-300/30 text-slate-200 border border-slate-300/40 px-1.5 py-0.5 rounded text-[10px] font-bold">○ Tạm chưa có ca</span>
+                          ? <span className="bg-emerald-400/30 text-emerald-200 border border-emerald-400/40 px-1.5 py-0.5 rounded text-[10px] font-bold">● Đang hoạt động</span>
+                          : <span className="bg-slate-300/30 text-slate-200 border border-slate-300/40 px-1.5 py-0.5 rounded text-[10px] font-bold">○ Ngưng hoạt động</span>
                         }
                       </div>
                       <div className="text-[11px] text-slate-300 font-medium mt-0.5">
@@ -548,30 +568,79 @@ function LoadingSpinner() {
   );
 }
 
+const PROJECT_COLORS = {
+  'BA VINDA':     { badge: 'bg-indigo-100 text-indigo-900 border-indigo-300 font-bold',  label: 'bg-indigo-600 text-white' },
+  'NESCAFÉ':      { badge: 'bg-amber-100 text-amber-950 border-amber-300 font-bold',     label: 'bg-amber-600 text-white' },
+  'MAGGI':        { badge: 'bg-emerald-100 text-emerald-950 border-emerald-300 font-bold', label: 'bg-emerald-600 text-white' },
+  'SGC BEAUTY':   { badge: 'bg-rose-100 text-rose-950 border-rose-300 font-bold',        label: 'bg-rose-600 text-white' },
+  'GOGI IN ST':   { badge: 'bg-sky-100 text-sky-950 border-sky-300 font-bold',           label: 'bg-sky-600 text-white' },
+  'CRV':          { badge: 'bg-violet-100 text-violet-950 border-violet-300 font-bold',   label: 'bg-violet-600 text-white' },
+  'STMB':         { badge: 'bg-cyan-100 text-cyan-950 border-cyan-300 font-bold',        label: 'bg-cyan-600 text-white' },
+  'BHX':          { badge: 'bg-teal-100 text-teal-950 border-teal-300 font-bold',        label: 'bg-teal-600 text-white' },
+  'MEGA NPL':     { badge: 'bg-pink-100 text-pink-950 border-pink-300 font-bold',        label: 'bg-pink-600 text-white' },
+  'MEGA LAUNDRY': { badge: 'bg-fuchsia-100 text-fuchsia-950 border-fuchsia-300 font-bold', label: 'bg-fuchsia-600 text-white' },
+};
+
+function getProjColor(proj) {
+  return PROJECT_COLORS[proj] || { badge: 'bg-slate-100 text-slate-800 border-slate-300 font-bold', label: 'bg-slate-600 text-white' };
+}
+
 function RosterTable({ title, colorBg, colorBorder, colorText, rows, dateFrom, dateTo }) {
   const [search, setSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 15;
 
+  /* Group shift rows by Date + Store Name + Brand */
+  const combinedRows = useMemo(() => {
+    const map = new Map();
+    rows.forEach(r => {
+      const key = `${r.dateISO}_${(r.storeName || '').toLowerCase()}_${(r.brand || '').toLowerCase()}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          dateISO:   r.dateISO,
+          dateRaw:   r.dateRaw,
+          storeName: r.storeName,
+          brand:     r.brand,
+          province:  r.province,
+          region:    r.region,
+          isNewHR:   r.isNewHR,
+          sups:      new Set(),
+          projects:  [],
+        });
+      }
+      const grp = map.get(key);
+      if (r.sup && r.sup !== '—') grp.sups.add(r.sup);
+      if (r.isNewHR) grp.isNewHR = true;
+
+      // Ensure distinct project shift entry
+      if (!grp.projects.some(p => p.project === r.project && p.shift === r.shift)) {
+        grp.projects.push({
+          project: r.project,
+          shift:   r.shift,
+          sup:     r.sup,
+        });
+      }
+    });
+    return [...map.values()];
+  }, [rows]);
+
   const filtered = useMemo(() => {
-    if (!search.trim()) return rows;
+    if (!search.trim()) return combinedRows;
     const q = search.toLowerCase();
-    return rows.filter(r =>
+    return combinedRows.filter(r =>
       (r.storeName || '').toLowerCase().includes(q) ||
-      (r.project || '').toLowerCase().includes(q) ||
       (r.brand || '').toLowerCase().includes(q) ||
-      (r.sup || '').toLowerCase().includes(q) ||
-      (r.province || '').toLowerCase().includes(q)
+      (r.province || '').toLowerCase().includes(q) ||
+      [...r.sups].some(s => s.toLowerCase().includes(q)) ||
+      r.projects.some(p => p.project.toLowerCase().includes(q) || p.shift.toLowerCase().includes(q))
     );
-  }, [rows, search]);
+  }, [combinedRows, search]);
 
   const totalPages = Math.ceil(filtered.length / pageSize) || 1;
   const pageRows = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
     return filtered.slice(start, start + pageSize);
   }, [filtered, currentPage, pageSize]);
-
-  const activeCount = filtered.filter(r => r.isWorking).length;
 
   const formatDateDDMMYY = (dateISO) => {
     if (!dateISO) return '—';
@@ -588,7 +657,7 @@ function RosterTable({ title, colorBg, colorBorder, colorText, rows, dateFrom, d
         <div className="flex items-center gap-3">
           <h4 className={`text-base font-extrabold ${colorText}`}>{title}</h4>
           <span className="bg-white/80 text-slate-700 border border-slate-200 px-2.5 py-0.5 rounded-full text-xs font-bold shadow-xs">
-            {filtered.length} ca làm việc
+            {filtered.length} siêu thị ({rows.length} ca)
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -612,12 +681,12 @@ function RosterTable({ title, colorBg, colorBorder, colorText, rows, dateFrom, d
             <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider text-[11px]">
               <th className="py-3 px-4">Ngày</th>
               <th className="py-3 px-4">Tên Siêu Thị</th>
-              <th className="py-3 px-4">Project</th>
+              <th className="py-3 px-4">Dự Án (Projects)</th>
               <th className="py-3 px-4">Brand</th>
               <th className="py-3 px-4">Tỉnh / Thành</th>
               <th className="py-3 px-4">Supervisor</th>
-              <th className="py-3 px-4">Ca Làm</th>
-              <th className="py-3 px-4 text-center">Status</th>
+              <th className="py-3 px-4">Ca Làm Việc theo Project</th>
+              <th className="py-3 px-4 text-center">Trạng Thái</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
@@ -628,40 +697,64 @@ function RosterTable({ title, colorBg, colorBorder, colorText, rows, dateFrom, d
                 </td>
               </tr>
             ) : (
-              pageRows.map((r, idx) => (
-                <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="py-2.5 px-4 font-mono font-bold text-slate-600 whitespace-nowrap">
-                    {formatDateDDMMYY(r.dateISO)}
-                  </td>
-                  <td className="py-2.5 px-4 font-bold text-slate-900">
-                    <div className="flex items-center gap-2">
-                      <span>{r.storeName}</span>
-                      {r.isNewHR && (
-                        <span className="bg-amber-100 text-amber-800 border border-amber-300 text-[10px] font-extrabold px-1.5 py-0.5 rounded shadow-2xs whitespace-nowrap">
-                          + NV Mới
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="py-2.5 px-4 font-semibold text-slate-700">{r.project}</td>
-                  <td className="py-2.5 px-4 text-slate-500">{r.brand}</td>
-                  <td className="py-2.5 px-4 text-slate-600">{r.province}</td>
-                  <td className="py-2.5 px-4 text-slate-600 font-medium">{r.sup}</td>
-                  <td className="py-2.5 px-4 font-mono text-slate-800 font-semibold">{r.shift}</td>
-                  <td className="py-2.5 px-4 text-center whitespace-nowrap">
-                    {r.isWorking ? (
+              pageRows.map((r, idx) => {
+                const supStr = [...r.sups].join(', ') || '—';
+                return (
+                  <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="py-2.5 px-4 font-mono font-bold text-slate-600 whitespace-nowrap align-top">
+                      {formatDateDDMMYY(r.dateISO)}
+                    </td>
+                    <td className="py-2.5 px-4 font-bold text-slate-900 align-top">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span>{r.storeName}</span>
+                        {r.isNewHR && (
+                          <span className="bg-amber-100 text-amber-800 border border-amber-300 text-[10px] font-extrabold px-1.5 py-0.5 rounded shadow-2xs whitespace-nowrap">
+                            + NV Mới
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    {/* Projects badges */}
+                    <td className="py-2.5 px-4 align-top">
+                      <div className="flex flex-wrap gap-1.5">
+                        {r.projects.map((p, pIdx) => {
+                          const c = getProjColor(p.project);
+                          return (
+                            <span key={pIdx} className={`inline-block px-2 py-0.5 rounded text-[11px] border ${c.badge}`}>
+                              {p.project}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </td>
+                    <td className="py-2.5 px-4 text-slate-500 font-semibold align-top">{r.brand || '—'}</td>
+                    <td className="py-2.5 px-4 text-slate-600 align-top">{r.province || '—'}</td>
+                    <td className="py-2.5 px-4 text-slate-700 font-semibold align-top">{supStr}</td>
+                    {/* Shift times with colored project tags */}
+                    <td className="py-2.5 px-4 align-top">
+                      <div className="space-y-1">
+                        {r.projects.map((p, pIdx) => {
+                          const c = getProjColor(p.project);
+                          return (
+                            <div key={pIdx} className="flex items-center gap-1.5">
+                              <span className={`text-[10px] font-extrabold px-1.5 py-0.2 rounded ${c.label}`}>
+                                {p.project}
+                              </span>
+                              <span className="font-mono text-xs font-extrabold text-slate-800">{p.shift}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </td>
+                    <td className="py-2.5 px-4 text-center whitespace-nowrap align-top">
                       <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 border border-emerald-200 px-2.5 py-0.5 rounded-full text-[11px] font-bold">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                        Đang làm
+                        Đang làm ({r.projects.length} ca)
                       </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-500 border border-slate-200 px-2.5 py-0.5 rounded-full text-[11px] font-medium">
-                        Off lịch
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>

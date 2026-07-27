@@ -9,9 +9,10 @@ export default function Header({ user, onLogout, activeTab, onTabChange }) {
   const role = user?.role || user?.customClaims?.role || 'PM';
 
   const navItems = [
-    { id: 'overview', label: 'Tổng Quan', icon: 'fa-chart-line' },
-    { id: 'daily', label: 'Daily Store', icon: 'fa-store' },
-    { id: 'hr', label: 'Nhân Sự & Đào Tạo', icon: 'fa-users' },
+    { id: 'summary',  label: 'Summary',       icon: 'fa-chart-pie' },
+    { id: 'schedule', label: 'Lịch làm BA',   icon: 'fa-calendar-days' },
+    { id: 'hr',       label: 'HR',             icon: 'fa-user-plus' },
+    { id: 'report',   label: 'Báo Cáo / UFF', icon: 'fa-link' },
   ];
 
   return (

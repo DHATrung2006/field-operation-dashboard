@@ -1,115 +1,85 @@
-@import "tailwindcss";
+/* Custom Dashboard Styles */
 
-@layer utilities {
-  /* Timeline Grid: 160px brand + 14 hour cols */
-  .tl-grid {
-    display: grid;
-    grid-template-columns: 160px repeat(14, minmax(36px, 1fr));
-  }
+/* Timeline Grid */
+.tl-grid {
+  display: grid;
+  grid-template-columns: 160px repeat(14, minmax(36px, 1fr));
+}
 
-  /* Tab bar */
-  .tab-btn {
-    padding: 10px 20px;
-    font-size: 13px;
-    font-weight: 600;
-    color: #64748b;
-    border-bottom: 2px solid transparent;
-    transition: all 0.2s ease;
-    cursor: pointer;
-  }
-  .tab-btn:hover {
-    color: #3b82f6;
-  }
-  .tab-btn.active {
-    color: #2563eb;
-    border-bottom-color: #2563eb;
-  }
+/* Tab bar */
+.tab-btn {
+  padding: 10px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+.tab-btn:hover {
+  color: #3b82f6;
+}
+.tab-btn.active {
+  color: #2563eb;
+  border-bottom-color: #2563eb;
+}
 
-  /* Login overlay */
-  .login-overlay {
-    position: fixed;
-    inset: 0;
-    background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 50%, #7c3aed 100%);
-    z-index: 100;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .login-card {
-    background: white;
-    border-radius: 20px;
-    padding: 40px;
-    width: 90%;
-    max-width: 400px;
-    box-shadow: 0 25px 60px rgba(0, 0, 0, 0.3);
-  }
-  .login-input {
-    width: 100%;
-    padding: 12px 16px;
-    border: 1.5px solid #e2e8f0;
-    border-radius: 10px;
-    font-size: 14px;
-    outline: none;
-    transition: all 0.2s;
-    box-sizing: border-box;
-  }
-  .login-input:focus {
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
-  }
-  .login-btn {
-    width: 100%;
-    padding: 12px;
-    background: linear-gradient(135deg, #2563eb, #7c3aed);
-    color: white;
-    border: none;
-    border-radius: 10px;
-    font-size: 15px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .login-btn:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
-  }
-  
-  /* HR Badges */
-  .hr-badge {
-    padding: 3px 10px;
-    border-radius: 9999px;
-    font-size: 11px;
-    font-weight: 600;
-    display: inline-block;
-  }
+/* Login overlay */
+.login-overlay {
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 50%, #7c3aed 100%);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.login-card {
+  background: white;
+  border-radius: 20px;
+  padding: 40px;
+  width: 90%;
+  max-width: 400px;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.3);
+}
+.login-input {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 14px;
+  outline: none;
+  transition: all 0.2s;
+  box-sizing: border-box;
+}
+.login-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+.login-btn {
+  width: 100%;
+  padding: 12px;
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.login-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
+}
 
-  /* Back to Top button */
-  #back-to-top {
-    position: fixed;
-    bottom: 24px;
-    right: 24px;
-    width: 44px;
-    height: 44px;
-    background: linear-gradient(135deg, #3b82f6, #6366f1);
-    color: white;
-    border: none;
-    border-radius: 50%;
-    cursor: pointer;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
-    z-index: 90;
-    transition: all 0.3s;
-    font-size: 18px;
-  }
-  #back-to-top:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 6px 20px rgba(59, 130, 246, 0.5);
-  }
-  #back-to-top.show {
-    display: flex;
-  }
+/* HR Badges */
+.hr-badge {
+  padding: 3px 10px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-block;
 }
 
 body {

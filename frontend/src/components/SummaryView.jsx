@@ -83,57 +83,46 @@ export default function SummaryView({ refreshKey = 0 }) {
   /* ── Supervisors list ────────────────────────────────────────────── */
   const sups = useMemo(() => getSups(masterRows), [masterRows]);
 
-  /* ── Build store-project placement map (unique per Store Name + Project) ── */
+  /* ── Build store map (grouped strictly by Store Name) ─────────────── */
   const allStoresMap = useMemo(() => {
     const map = {};
     masterRows.forEach(r => {
       const storeName = (r['Store Name'] || r['Store Code'] || '').trim();
-      const proj      = (r['Project'] || '—').trim();
       if (!storeName) return;
-
-      const normKey = `${storeName.toLowerCase()}_${proj.toLowerCase()}`;
+      const normKey = storeName.toLowerCase();
       const reg     = normalizeRegion(r['Region'], r['Province'], storeName);
 
       if (!map[normKey]) {
         map[normKey] = {
           code:        (r['Store Code'] || '').trim(),
           name:        storeName,
-          project:     proj,
-          brand:       (r['Brand'] || '—').trim(),
-          sup:         (r['Sup'] || '—').trim(),
           region:      reg,
           province:    (r['Province'] || '—').trim(),
-          isNewHR:     hrStoreSet.has(storeName.toLowerCase()),
+          isNewHR:     hrStoreSet.has(normKey),
+          projects:    new Set(),
+          brands:      new Set(),
+          sups:        new Set(),
           shifts:      [],
         };
-      } else {
-        if (!map[normKey].code && r['Store Code']) {
-          map[normKey].code = r['Store Code'].trim();
-        }
-        if ((map[normKey].region === 'Tỉnh' || !map[normKey].region) && reg !== 'Tỉnh') {
-          map[normKey].region = reg;
-        }
-        if ((!map[normKey].province || map[normKey].province === '—') && r['Province']) {
-          map[normKey].province = r['Province'].trim();
-        }
-        if ((!map[normKey].sup || map[normKey].sup === '—') && r['Sup']) {
-          map[normKey].sup = r['Sup'].trim();
-        }
-        if ((!map[normKey].brand || map[normKey].brand === '—') && r['Brand']) {
-          map[normKey].brand = r['Brand'].trim();
-        }
       }
+
+      const st = map[normKey];
+      if (r['Project']) st.projects.add(r['Project'].trim());
+      if (r['Brand'])   st.brands.add(r['Brand'].trim());
+      if (r['Sup'])     st.sups.add(r['Sup'].trim());
+      if ((st.region === 'Tỉnh' || !st.region) && reg !== 'Tỉnh') st.region = reg;
+      if ((!st.province || st.province === '—') && r['Province']) st.province = r['Province'].trim();
 
       if (r['Date']) {
         const dateISO = parseVNDateISO(r['Date']);
-        map[normKey].shifts.push({
+        st.shifts.push({
           dateISO,
           dateRaw: r['Date'],
           time:    r['Working Time'] || '',
           status:  r['Status'] || '',
-          project: proj,
-          brand:   (r['Brand'] || map[normKey].brand).trim(),
-          sup:     (r['Sup'] || map[normKey].sup).trim(),
+          project: (r['Project'] || '—').trim(),
+          brand:   (r['Brand'] || '—').trim(),
+          sup:     (r['Sup'] || '—').trim(),
         });
       }
     });
@@ -142,13 +131,10 @@ export default function SummaryView({ refreshKey = 0 }) {
 
   const allStoresList = useMemo(() => Object.values(allStoresMap), [allStoresMap]);
 
-  /* ── Date range: compare as "YYYY-MM-DD" strings (no timezone issue) ── */
-  // No conversion needed — dateFrom/dateTo are already "YYYY-MM-DD" from <input type="date">
-
   /* ── Filtered stores (by SUP + HR checkbox) ─────────────────────── */
   const filteredStores = useMemo(() => {
     let list = allStoresList;
-    if (selSup)    list = list.filter(s => s.sup === selSup);
+    if (selSup)    list = list.filter(s => s.sups.has(selSup));
     if (onlyNewHR) list = list.filter(s => s.isNewHR);
     return list;
   }, [allStoresList, selSup, onlyNewHR]);
@@ -159,20 +145,20 @@ export default function SummaryView({ refreshKey = 0 }) {
     filteredStores.forEach(s => {
       s.shifts.forEach(sh => {
         if (!sh.dateISO) return;
-        // Safe string comparison: "2026-07-27" >= "2026-07-27" works correctly
         if (dateFrom && sh.dateISO < dateFrom) return;
         if (dateTo   && sh.dateISO > dateTo)   return;
+        if (selSup   && sh.sup !== selSup)     return;
         
         const isOff = !sh.time || sh.time.toLowerCase().includes('off') || sh.time.toLowerCase().includes('nghỉ');
-        if (isOff || !sh.time.trim()) return; // ONLY KEEP WORKING SHIFTS
+        if (isOff || !sh.time.trim()) return;
 
         rows.push({
           storeName: s.name,
-          project:   sh.project || s.project,
-          brand:     sh.brand || s.brand,
+          project:   sh.project,
+          brand:     sh.brand,
           region:    s.region,
           province:  s.province,
-          sup:       sh.sup || s.sup,
+          sup:       sh.sup,
           shift:     sh.time,
           dateRaw:   sh.dateRaw,
           dateISO:   sh.dateISO,
@@ -181,17 +167,16 @@ export default function SummaryView({ refreshKey = 0 }) {
         });
       });
     });
-    // Sort by ISO string = correct chronological order
     rows.sort((a, b) => a.dateISO.localeCompare(b.dateISO));
     return rows;
-  }, [filteredStores, dateFrom, dateTo]);
+  }, [filteredStores, dateFrom, dateTo, selSup]);
 
   const activeCount = rosterRows.length;
   const offCount    = 0;
 
   /* ── Total unique physical supermarket stores count ────────────────── */
   const uniqueStoreCount = useMemo(() => {
-    return new Set(filteredStores.map(s => s.name.toLowerCase())).size;
+    return filteredStores.length;
   }, [filteredStores]);
 
   /* ── Projects active in the next 2 months (today → today + 60 days) ──── */
@@ -209,7 +194,7 @@ export default function SummaryView({ refreshKey = 0 }) {
         if (isOff || !sh.time.trim()) return;
 
         if (sh.dateISO >= today && sh.dateISO <= next2MonthsISO) {
-          activeSet.add(sh.project || s.project);
+          activeSet.add(sh.project);
         }
       });
     });
@@ -220,27 +205,33 @@ export default function SummaryView({ refreshKey = 0 }) {
   const projectBlocks = useMemo(() => {
     const map = {};
     filteredStores.forEach(s => {
-      const p = s.project || '—';
-      if (!map[p]) {
-        map[p] = {
-          project:  p,
-          brands:   new Set(),
-          total:    0,
-          hcm:      0,
-          hn:       0,
-          tinh:     0,
-          isActive: activeProjSet2Months.has(p),
-        };
-      }
-      if (s.brand && s.brand !== '—') map[p].brands.add(s.brand);
-      map[p].total++;
-      if      (s.region === 'HCM') map[p].hcm++;
-      else if (s.region === 'HN')  map[p].hn++;
-      else                          map[p].tinh++;
+      const sProjects = selSup
+        ? new Set(s.shifts.filter(sh => sh.sup === selSup).map(sh => sh.project))
+        : s.projects;
+
+      sProjects.forEach(p => {
+        if (!p || p === '—') return;
+        if (!map[p]) {
+          map[p] = {
+            project:  p,
+            brands:   new Set(),
+            total:    0,
+            hcm:      0,
+            hn:       0,
+            tinh:     0,
+            isActive: activeProjSet2Months.has(p),
+          };
+        }
+        s.brands.forEach(b => { if (b && b !== '—') map[p].brands.add(b); });
+        map[p].total++;
+        if      (s.region === 'HCM') map[p].hcm++;
+        else if (s.region === 'HN')  map[p].hn++;
+        else                          map[p].tinh++;
+      });
     });
     const all = Object.values(map).sort((a, b) => b.total - a.total);
     return onlyActiveProj ? all.filter(p => p.isActive) : all;
-  }, [filteredStores, activeProjSet2Months, onlyActiveProj]);
+  }, [filteredStores, selSup, activeProjSet2Months, onlyActiveProj]);
 
   /* ── Roster split by region ──────────────────────────────────────── */
   const rosterHCM  = useMemo(() => rosterRows.filter(r => r.region === 'HCM'),  [rosterRows]);

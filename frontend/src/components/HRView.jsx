@@ -7,6 +7,7 @@ import html2canvas from 'html2canvas';
 const STATUS_STYLE = {
   Sourcing:      'bg-sky-100 text-sky-800 border-sky-200',
   Interviewing:  'bg-violet-100 text-violet-800 border-violet-200',
+  Offering:      'bg-amber-100 text-amber-800 border-amber-200',
   'Offer Sent':  'bg-amber-100 text-amber-800 border-amber-200',
   Onboarding:    'bg-blue-100 text-blue-800 border-blue-200',
   Training:      'bg-indigo-100 text-indigo-800 border-indigo-200',
@@ -27,24 +28,52 @@ export default function HRView({ refreshKey = 0 }) {
     fetchHRStatus(force).then(data => { setRows(data); setLoading(false); });
   }, [refreshKey]);
 
-  // Column names from HR_Status sheet:
-  // "Project","Mart Name","Brand","Sup","Loại Tuyển Dụng","Tình trạng Tuyển Dụng","Tình trạng shop",
-  // "Ngày siêu trống BA","Target of Week","HR Commit","Filled"
-  const normalize = r => ({
-    store:       r['Mart Name'] || r['Store'] || '',
-    project:     r['Project'] || '',
-    brand:       r['Brand'] || '',
-    sup:         r['Sup'] || r['Supervisor'] || '',
-    recruitType: r['Loại Tuyển Dụng'] || r['Loai Tuyen Dung'] || '',
-    status:      r['Tình trạng Tuyển Dụng'] || r['Status'] || r['Tinh trang'] || '',
-    shopStatus:  r['Tình trạng shop'] || r['Shop Status'] || '',
-    vacantDate:  r['Ngày siêu trống BA'] || r['Ngay trong'] || '',
-    targetWeek:  r['Target of Week'] || r['Target Week'] || '',
-    hrCommit:    parseInt(r['HR Commit'] || r['Cam kết'] || 0) || 0,
-    filled:      parseInt(r['Filled'] || r['Đã tuyển'] || 0) || 0,
-  });
+  /* ── Normalize rows & Auto-complete previous week stores no longer in latest week ── */
+  const normRows = useMemo(() => {
+    const raw = rows.map(r => {
+      const commit = parseInt(r['HR Commit'] || r['Cam kết'] || 1) || 1;
+      const fill   = parseInt(r['Filled'] || r['Đã tuyển'] || 0) || 0;
+      return {
+        store:       (r['Mart Name'] || r['Store Name'] || r['Store'] || '').trim(),
+        project:     (r['Project'] || '').trim(),
+        brand:       (r['Brand'] || '').trim(),
+        sup:         (r['Sup'] || r['Supervisor'] || '').trim(),
+        recruitType: (r['Loại Tuyển Dụng'] || r['Loai Tuyen Dung'] || '').trim(),
+        status:      (r['Tình trạng Tuyển Dụng'] || r['Status'] || r['Tinh trang'] || 'Sourcing').trim(),
+        shopStatus:  (r['Tình trạng shop'] || r['Shop Status'] || '').trim(),
+        vacantDate:  (r['Ngày siêu trống BA'] || r['Ngay trong'] || '').trim(),
+        targetWeek:  (r['Target of Week'] || r['Target Week'] || '').trim(),
+        hrCommit:    commit,
+        filled:      fill,
+      };
+    });
 
-  const normRows = useMemo(() => rows.map(normalize), [rows]);
+    const weeks = [...new Set(raw.map(r => r.targetWeek).filter(Boolean))];
+    if (weeks.length === 0) return raw;
+
+    weeks.sort();
+    const latestWeek = weeks[weeks.length - 1]; // e.g. "Week 31.26"
+
+    const latestWeekKeys = new Set();
+    raw.filter(r => r.targetWeek === latestWeek).forEach(r => {
+      const k = `${r.store.toLowerCase()}_${r.project.toLowerCase()}`;
+      latestWeekKeys.add(k);
+    });
+
+    return raw.map(r => {
+      const k = `${r.store.toLowerCase()}_${r.project.toLowerCase()}`;
+      // Stores from previous weeks (e.g. Week 30.26) not present in latestWeek (Week 31.26) are Completed
+      if (r.targetWeek && r.targetWeek !== latestWeek && !latestWeekKeys.has(k)) {
+        return {
+          ...r,
+          status: 'Completed',
+          filled: r.hrCommit > 0 ? r.hrCommit : 1,
+          isDonePrevWeek: true,
+        };
+      }
+      return r;
+    });
+  }, [rows]);
 
   const projects  = useMemo(() => [...new Set(normRows.map(r=>r.project).filter(Boolean))].sort(), [normRows]);
   const statuses  = useMemo(() => [...new Set(normRows.map(r=>r.status).filter(Boolean))].sort(), [normRows]);
@@ -75,7 +104,7 @@ export default function HRView({ refreshKey = 0 }) {
       const s = r.status;
       if (s==='Sourcing') weekMap[w].sourcing++;
       else if (s==='Interviewing') weekMap[w].interviewing++;
-      else if (s==='Offer Sent') weekMap[w].offer++;
+      else if (s==='Offering'||s==='Offer Sent') weekMap[w].offer++;
       else if (s==='Training'||s==='Onboarding') weekMap[w].training++;
       else if (s==='Completed') weekMap[w].completed++;
     });

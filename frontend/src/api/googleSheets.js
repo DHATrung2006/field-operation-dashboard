@@ -168,13 +168,14 @@ export function getWeek(dateStr) {
 }
 
 /**
- * Normalize Region label using both Region and Province fields
+ * Normalize Region label using Region, Province, and Store Name keywords
  */
-export function normalizeRegion(r, prov) {
+export function normalizeRegion(r, prov, storeName) {
   const pStr = (prov || '').trim().toLowerCase();
   const rStr = (r || '').trim().toLowerCase();
+  const sStr = (storeName || '').trim().toLowerCase();
 
-  // 1. Check Province first (most reliable for HCM / HN)
+  // 1. Check Province first (most reliable)
   if (
     pStr.includes('hcm') ||
     pStr.includes('hồ chí minh') ||
@@ -206,6 +207,23 @@ export function normalizeRegion(r, prov) {
   ) {
     return 'HN';
   }
+
+  // 3. Check Store Name keywords for known HCM / HN locations
+  const hcmKeywords = [
+    'cống quỳnh', 'rạch miễu', 'nguyễn đình chiểu', 'huỳnh tấn phát',
+    'xa lộ hà nội', 'phú lâm', 'nguyễn ảnh thủ', 'lý thường kiệt',
+    'quang trung', 'văn thánh', 'tân phong', 'phạm văn đồng',
+    'sư vạn hạnh', 'linh trung', 'hậu giang', 'nguyễn kiệm',
+    'thắng lợi', 'tuy lý vương', 'phú thọ', 'nhiêu lộc',
+    'vivo city', 'lotte gò vấp', 'emart gò vấp', 'landmark', 'thảo điền'
+  ];
+  const hnKeywords = [
+    'hà đông', 'ba đình', 'thăng long', 'times city',
+    'trúc khê', 'ocean park', 'long biên', 'thủ lệ', 'liễu giai'
+  ];
+
+  if (hcmKeywords.some(k => sStr.includes(k))) return 'HCM';
+  if (hnKeywords.some(k => sStr.includes(k))) return 'HN';
 
   const map = {
     HN: 'HN', HCM: 'HCM',

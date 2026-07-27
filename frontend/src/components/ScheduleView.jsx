@@ -63,7 +63,7 @@ export default function ScheduleView() {
           project:  r['Project'] || '',
           brand:    r['Brand'] || '',
           sup:      r['Sup'] || '',
-          region:   normalizeRegion(r['Region']),
+          region:   normalizeRegion(r['Region'], r['Province'], r['Store Name']),
           province: r['Province'] || r['Tỉnh'] || '',
           status:   r['Status'] || '',
           dayMap:   {}, // "YYYY-MM-DD" → { dow, time }

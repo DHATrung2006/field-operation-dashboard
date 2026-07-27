@@ -63,40 +63,55 @@ export default function SummaryView() {
   /* ── Supervisors list ────────────────────────────────────────────── */
   const sups = useMemo(() => getSups(masterRows), [masterRows]);
 
-  /* ── Build store map (unique store per Store Code) ─────────────── */
+  /* ── Build store map (unique store per Store Name) ─────────────── */
   const allStoresMap = useMemo(() => {
     const map = {};
     masterRows.forEach(r => {
-      const key = (r['Store Code'] || r['Store Name'] || '').trim();
-      if (!key) return;
-      const reg = normalizeRegion(r['Region'], r['Province']);
-      if (!map[key]) {
-        map[key] = {
-          code:        r['Store Code'] || '',
-          name:        (r['Store Name'] || key).trim(),
-          project:     r['Project'] || '—',
-          brand:       r['Brand'] || '—',
-          sup:         r['Sup'] || '—',
+      const storeName = (r['Store Name'] || r['Store Code'] || '').trim();
+      if (!storeName) return;
+      const normKey = storeName.toLowerCase();
+      const reg = normalizeRegion(r['Region'], r['Province'], storeName);
+
+      if (!map[normKey]) {
+        map[normKey] = {
+          code:        (r['Store Code'] || '').trim(),
+          name:        storeName,
+          project:     (r['Project'] || '—').trim(),
+          brand:       (r['Brand'] || '—').trim(),
+          sup:         (r['Sup'] || '—').trim(),
           region:      reg,
-          province:    r['Province'] || '—',
-          isNewHR:     hrStoreSet.has((r['Store Name'] || '').trim().toLowerCase()),
-          shifts:      [], // {dateObj, dateRaw, time}
+          province:    (r['Province'] || '—').trim(),
+          isNewHR:     hrStoreSet.has(normKey),
+          shifts:      [],
         };
       } else {
-        if (map[key].region === 'Tỉnh' && reg !== 'Tỉnh') {
-          map[key].region = reg;
+        if (!map[normKey].code && r['Store Code']) {
+          map[normKey].code = r['Store Code'].trim();
         }
-        if ((!map[key].province || map[key].province === '—') && r['Province']) {
-          map[key].province = r['Province'];
+        if ((map[normKey].region === 'Tỉnh' || !map[normKey].region) && reg !== 'Tỉnh') {
+          map[normKey].region = reg;
+        }
+        if ((!map[normKey].province || map[normKey].province === '—') && r['Province']) {
+          map[normKey].province = r['Province'].trim();
+        }
+        if ((!map[normKey].sup || map[normKey].sup === '—') && r['Sup']) {
+          map[normKey].sup = r['Sup'].trim();
+        }
+        if ((!map[normKey].brand || map[normKey].brand === '—') && r['Brand']) {
+          map[normKey].brand = r['Brand'].trim();
         }
       }
+
       if (r['Date']) {
         const dateISO = parseVNDateISO(r['Date']);
-        map[key].shifts.push({
+        map[normKey].shifts.push({
           dateISO,             // "YYYY-MM-DD" string for safe range comparison
           dateRaw: r['Date'],  // Original Vietnamese string for display
           time:    r['Working Time'] || '',
           status:  r['Status'] || '',
+          project: (r['Project'] || map[normKey].project).trim(),
+          brand:   (r['Brand'] || map[normKey].brand).trim(),
+          sup:     (r['Sup'] || map[normKey].sup).trim(),
         });
       }
     });
@@ -128,11 +143,11 @@ export default function SummaryView() {
         const isOff = !sh.time || sh.time.toLowerCase().includes('off') || sh.time.toLowerCase().includes('nghỉ');
         rows.push({
           storeName: s.name,
-          project:   s.project,
-          brand:     s.brand,
+          project:   sh.project || s.project,
+          brand:     sh.brand || s.brand,
           region:    s.region,
           province:  s.province,
-          sup:       s.sup,
+          sup:       sh.sup || s.sup,
           shift:     sh.time || 'Off lịch',
           dateRaw:   sh.dateRaw,
           dateISO:   sh.dateISO,

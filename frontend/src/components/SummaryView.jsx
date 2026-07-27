@@ -301,32 +301,6 @@ export default function SummaryView({ refreshKey = 0 }) {
             />
           </div>
 
-          {/* Quick Date Presets */}
-          <div className="flex items-center gap-1.5 pb-0.5">
-            <button
-              onClick={() => { setDateFrom('2026-07-27'); setDateTo('2026-07-27'); }}
-              className={`px-2.5 py-2 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
-                dateFrom === '2026-07-27' && dateTo === '2026-07-27'
-                  ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                  : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
-              }`}
-              title="Chọn nhanh ngày 27/07/2026"
-            >
-              27/07/26
-            </button>
-            <button
-              onClick={() => { setDateFrom(''); setDateTo(''); }}
-              className={`px-2.5 py-2 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
-                !dateFrom && !dateTo
-                  ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                  : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
-              }`}
-              title="Bỏ lọc ngày để xem toàn bộ ca làm trong Sheet"
-            >
-              Tất cả ngày
-            </button>
-          </div>
-
           {/* Checkbox NV Mới */}
           <div className="pb-0.5">
             <label className="flex items-center gap-2 cursor-pointer bg-amber-50 border border-amber-200 hover:bg-amber-100 transition-colors rounded-lg px-3.5 py-2.5">
@@ -494,31 +468,6 @@ export default function SummaryView({ refreshKey = 0 }) {
             <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1 rounded-full">✓ Tổng ca làm việc: {rosterRows.length}</span>
           </div>
         </div>
-
-        {/* Empty state when 0 rows match date filter */}
-        {rosterRows.length === 0 && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center my-3 shadow-xs">
-            <i className="fa-solid fa-calendar-xmark text-amber-500 text-3xl mb-2" />
-            <h4 className="font-bold text-amber-900 text-sm">Chưa tìm thấy ca làm việc trong khoảng ngày đã chọn ({dateFrom}{dateTo !== dateFrom ? ` → ${dateTo}` : ''})</h4>
-            <p className="text-xs text-amber-700 mt-1 max-w-md mx-auto font-medium">
-              Dữ liệu Google Sheet hiện tại có lịch phân ca thuộc ngày <span className="font-extrabold text-amber-900">27/07/2026</span>. Bấm nút bên dưới để hiển thị:
-            </p>
-            <div className="flex items-center justify-center gap-3 mt-4 flex-wrap">
-              <button
-                onClick={() => { setDateFrom('2026-07-27'); setDateTo('2026-07-27'); }}
-                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer"
-              >
-                📅 Chọn ngày 27/07/2026
-              </button>
-              <button
-                onClick={() => { setDateFrom(''); setDateTo(''); }}
-                className="px-4 py-2 bg-white border border-amber-300 text-amber-900 hover:bg-amber-100 rounded-lg text-xs font-bold transition-all cursor-pointer"
-              >
-                🌐 Hiển thị tất cả lịch (Bỏ lọc ngày)
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* HCM */}
         <RosterTable

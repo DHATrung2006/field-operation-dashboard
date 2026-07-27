@@ -630,6 +630,11 @@ function RosterTable({ title, colorBg, colorBorder, colorText, rows, dateFrom, d
     );
   }, [combinedRows, search]);
 
+  /* Unique physical stores count in table */
+  const uniqueStoresCount = useMemo(() => {
+    return new Set(filtered.map(r => r.storeName.toLowerCase())).size;
+  }, [filtered]);
+
   const totalPages = Math.ceil(filtered.length / pageSize) || 1;
   const pageRows = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
@@ -651,7 +656,7 @@ function RosterTable({ title, colorBg, colorBorder, colorText, rows, dateFrom, d
         <div className="flex items-center gap-3">
           <h4 className={`text-base font-extrabold ${colorText}`}>{title}</h4>
           <span className="bg-white/80 text-slate-700 border border-slate-200 px-2.5 py-0.5 rounded-full text-xs font-bold shadow-xs">
-            {filtered.length} siêu thị ({rows.length} ca)
+            {uniqueStoresCount} siêu thị ({rows.length} ca làm việc)
           </span>
         </div>
         <div className="flex items-center gap-2">

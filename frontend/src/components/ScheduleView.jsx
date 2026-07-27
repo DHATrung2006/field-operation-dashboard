@@ -59,14 +59,15 @@ export default function ScheduleView() {
       if (!map[code]) {
         map[code] = {
           code,
-          name:    r['Store Name'] || '',
-          project: r['Project'] || '',
-          brand:   r['Brand'] || '',
-          sup:     r['Sup'] || '',
-          region:  normalizeRegion(r['Region']),
-          status:  r['Status'] || '',
-          dayMap:  {}, // "YYYY-MM-DD" → { dow, time }
-          times:   [],
+          name:     r['Store Name'] || '',
+          project:  r['Project'] || '',
+          brand:    r['Brand'] || '',
+          sup:      r['Sup'] || '',
+          region:   normalizeRegion(r['Region']),
+          province: r['Province'] || r['Tỉnh'] || '',
+          status:   r['Status'] || '',
+          dayMap:   {}, // "YYYY-MM-DD" → { dow, time }
+          times:    [],
         };
       }
       const d = parseDate(r['Date']);
@@ -132,11 +133,12 @@ export default function ScheduleView() {
     if (search.trim()) {
       const q = search.toLowerCase();
       d = d.filter(s =>
-        s.name.toLowerCase().includes(q)    ||
-        s.code.toLowerCase().includes(q)    ||
-        s.sup.toLowerCase().includes(q)     ||
-        s.region.toLowerCase().includes(q)  ||
-        s.project.toLowerCase().includes(q) ||
+        s.name.toLowerCase().includes(q)     ||
+        s.code.toLowerCase().includes(q)     ||
+        s.sup.toLowerCase().includes(q)      ||
+        s.region.toLowerCase().includes(q)   ||
+        s.province.toLowerCase().includes(q) ||
+        s.project.toLowerCase().includes(q)  ||
         s.brand.toLowerCase().includes(q)
       );
     }

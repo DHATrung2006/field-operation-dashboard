@@ -35,13 +35,14 @@ export default function SummaryView() {
       if (!map[code]) {
         map[code] = {
           code,
-          name:    r['Store Name'] || '',
-          project: r['Project'] || '',
-          brand:   r['Brand'] || '',
-          sup:     r['Sup'] || '',
-          region:  normalizeRegion(r['Region']),
-          dates:   [],
-          status:  r['Status'] || 'Active',
+          name:     r['Store Name'] || '',
+          project:  r['Project'] || '',
+          brand:    r['Brand'] || '',
+          sup:      r['Sup'] || '',
+          region:   normalizeRegion(r['Region']),
+          province: r['Province'] || r['Tỉnh'] || '',
+          dates:    [],
+          status:   r['Status'] || 'Active',
         };
       }
       map[code].dates.push(r['Date']);

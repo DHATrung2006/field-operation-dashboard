@@ -526,7 +526,7 @@ export default function ReportView({ refreshKey }) {
     if (!files.length) return;
     setIsProcessing(true);
 
-    const createdSessions = [];
+    const newSessions = [];
 
     for (const file of files) {
       setProgress(`Đang giải nén: ${file.name}...`);

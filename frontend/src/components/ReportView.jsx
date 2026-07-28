@@ -33,21 +33,100 @@ function todayISO() {
 }
 function pad(n) { return String(n).padStart(2,'0'); }
 
-/** Extremely flexible date parser into YYYY-MM-DD */
+/** Remove Vietnamese diacritics */
+function removeAccents(str) {
+  if (!str) return '';
+  return String(str)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D');
+}
+
+/** Clean & normalize string for matching */
+function cleanStoreStr(str) {
+  if (!str) return '';
+  return removeAccents(str)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Extract numbers with at least 3 digits */
+function extractDigits(str) {
+  const m = String(str || '').match(/\d{3,}/g);
+  return m ? m.join('') : '';
+}
+
+/** Normalize Project Name */
+function normalizeProjName(p) {
+  if (!p) return 'Khác';
+  const raw = String(p).trim().toUpperCase();
+  for (const [k, v] of Object.entries(PREFIX_MAP)) {
+    if (raw === k || raw.startsWith(k)) return v;
+  }
+  if (/NEST|NCF|NSF|NSC|NES/.test(raw)) return 'NESTCAFE';
+  if (/PNG|P&G|PG/.test(raw)) return 'P&G';
+  if (/MAGGI|MAG|MGI/.test(raw)) return 'MAGGI';
+  if (/VINDA|VDA|VND|VIN/.test(raw)) return 'VINDA';
+  if (/STMB|STM/.test(raw)) return 'STMB';
+  if (/UNI/.test(raw)) return 'Unilever';
+  if (/AEON|AEO/.test(raw)) return 'AEON';
+  return p;
+}
+
+/** Robust store matcher: code, numeric, unaccented name, word overlap */
+function isStoreMatch(sched, zip) {
+  // 1. Projects must align (if both known)
+  const pSched = normalizeProjName(sched.project);
+  const pZip   = normalizeProjName(zip.projLabel);
+  if (pSched && pZip && pSched !== pZip && pSched !== 'Khác' && pZip !== 'Khác') {
+    return false;
+  }
+
+  // 2. Exact or Normalized Code Match (e.g. K08620 vs K08620 or K-08620)
+  const codeS = cleanStoreStr(sched.storeCode).replace(/\s/g, '');
+  const codeZ = cleanStoreStr(zip.storeCode).replace(/\s/g, '');
+  if (codeS && codeZ && (codeS === codeZ || codeS.includes(codeZ) || codeZ.includes(codeS))) {
+    return true;
+  }
+
+  // 3. Numeric Code Match (e.g. 08620 or 8620 appearing in storeCode or storeName of both)
+  const numS = extractDigits(sched.storeCode + ' ' + sched.storeName);
+  const numZ = extractDigits(zip.storeCode + ' ' + zip.storeName);
+  if (numS && numZ && numS.length >= 3 && numZ.length >= 3 && (numS === numZ || numS.includes(numZ) || numZ.includes(numS))) {
+    return true;
+  }
+
+  // 4. Clean Unaccented Name Inclusion Match (e.g. "coopmart go vap" vs "co.opmart gò vấp")
+  const nameS = cleanStoreStr(sched.storeName);
+  const nameZ = cleanStoreStr(zip.storeName);
+  if (nameS && nameZ) {
+    if (nameS.includes(nameZ) || nameZ.includes(nameS)) return true;
+
+    // 5. Word Overlap Match (if > 50% of words in zip name appear in schedule name)
+    const wordsZ = nameZ.split(' ').filter(w => w.length > 2);
+    if (wordsZ.length >= 2) {
+      const matchCount = wordsZ.filter(w => nameS.includes(w)).length;
+      if (matchCount / wordsZ.length >= 0.5) return true;
+    }
+  }
+
+  return false;
+}
+
+/** Flexible date parser into YYYY-MM-DD */
 function parseVNDate(str) {
   if (!str) return null;
   const s = String(str).trim();
   let m;
-  // "20 tháng 7, 2026" or "20 thg 07 2026"
   m = s.match(/(\d+)\s+(?:tháng|thg)?\s*(\d+)[,\s]+(\d{4})/i);
   if (m) return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`;
-  // "20/07/2026" or "20-07-2026" or "20.07.2026"
   m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/);
   if (m) return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`;
-  // "2026-07-20" or "2026/07/20" or "2026-7-20"
   m = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
   if (m) return `${m[1]}-${pad(+m[2])}-${pad(+m[3])}`;
-  // "20260720"
   m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
   if (m) return `${m[1]}-${m[2]}-${m[3]}`;
   return null;
@@ -58,11 +137,11 @@ function detectProjFolder(part) {
   const m = part.match(/^([A-Za-z&]+)_\d{8}(_\d{8})?$/);
   if (!m) return '';
   const raw = m[1].toUpperCase();
-  return PREFIX_MAP[raw] || raw;
+  return normalizeProjName(raw);
 }
 
 function normStr(s) {
-  return (s||'').trim().toLowerCase().replace(/[_\-\.]/g,' ').replace(/\s+/g,' ');
+  return cleanStoreStr(s);
 }
 
 /** Determine status: Đúng giờ / Đi trễ / Chưa CI */
@@ -88,22 +167,16 @@ async function getOCRWorker() {
   return _tesseractWorker;
 }
 
-/**
- * Crop bottom 30% of an image blob and run OCR to find a time pattern.
- * Images from UFF app have the timestamp watermarked at the bottom.
- */
 async function ocrTimeFromBlob(blob) {
   try {
     const bitmap = await createImageBitmap(blob);
     const canvas = document.createElement('canvas');
-    // Crop bottom 30% — where UFF timestamps usually appear
     const cropH = Math.max(60, Math.floor(bitmap.height * 0.30));
     canvas.width  = bitmap.width;
     canvas.height = cropH;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(bitmap, 0, bitmap.height - cropH, bitmap.width, cropH, 0, 0, bitmap.width, cropH);
 
-    // Enhance contrast: invert if background is dark (white text)
     const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const d = imgData.data;
     let brightPx = 0;
@@ -124,7 +197,6 @@ async function ocrTimeFromBlob(blob) {
     const { data } = await worker.recognize(canvas);
     const text = data.text;
 
-    // Extract HH:MM or HH:MM:SS pattern
     const m = text.match(/\b([01]?\d|2[0-3])[:\.h]([0-5]\d)(?:[:\.][0-5]\d)?\b/);
     if (m) return `${pad(+m[1])}:${pad(+m[2])}`;
   } catch (e) {
@@ -138,9 +210,7 @@ async function ocrTimeFromBlob(blob) {
    ═══════════════════════════════════════════════════════════════ */
 export default function ReportView({ refreshKey }) {
   const [masterData, setMasterData] = useState([]);
-
-  // Each uploaded zip is a "session"
-  const [sessions, setSessions] = useState([]); // [{ id, fileName, project, dates, storeMap }]
+  const [sessions, setSessions]     = useState([]);
 
   // Filters
   const [search,     setSearch]     = useState('');
@@ -152,7 +222,6 @@ export default function ReportView({ refreshKey }) {
   const [previewImage, setPreviewImage] = useState(null);
   const [previewList,  setPreviewList]  = useState([]);
 
-  // OCR state per row: { rowId → 'scanning' | { ciTime, coTime } }
   const [ocrState, setOcrState] = useState({});
 
   // API test
@@ -216,11 +285,9 @@ export default function ReportView({ refreshKey }) {
               const pj = detectProjFolder(p);
               if (pj) { projLabel = pj; projFound = true; }
             }
-            // Date detection in folder path
             let dParsed = parseVNDate(p);
             if (dParsed) { datePart = dParsed; continue; }
 
-            // Check if folder is project range like "PNG_20260720_20260726"
             const rangeMatch = p.match(/^[A-Za-z&]+_(\d{8})/);
             if (rangeMatch && !datePart) {
               const ds = rangeMatch[1];
@@ -230,22 +297,19 @@ export default function ReportView({ refreshKey }) {
             if (p.includes('_') && !/^\d{8}$/.test(p) && !detectProjFolder(p)) shopPart = p;
           }
 
-          // Fallback shop folder
           if (!shopPart && parts.length >= 2) {
             const parent = parts[parts.length - 2];
             if (!/^\d{8}$/.test(parent) && !detectProjFolder(parent)) shopPart = parent;
           }
 
-          // Fallback date from filename if not in folder
           if (!datePart) {
             const fnDateMatch = fileName.match(/(\d{4})[_\-]?(\d{2})[_\-]?(\d{2})/);
             if (fnDateMatch) datePart = `${fnDateMatch[1]}-${fnDateMatch[2]}-${fnDateMatch[3]}`;
           }
 
-          if (!datePart) datePart = todayISO(); // ultimate fallback
-          if (projLabel) detectedProject = projLabel;
+          if (!datePart) datePart = todayISO();
+          if (projLabel) detectedProject = normalizeProjName(projLabel);
 
-          // Parse store code + name from "CODE_Name With Spaces"
           let storeCode = shopPart || 'STORE';
           let storeName = shopPart || 'Store ' + (idx + 1);
           if (shopPart.includes('_')) {
@@ -256,16 +320,17 @@ export default function ReportView({ refreshKey }) {
 
           const fnLow = fileName.toLowerCase();
           const isCO  = /^co[_\-]|[_\-]co[_\-\.]/.test(fnLow);
-          // Everything else is CI (default)
 
           const blob   = await zip.files[fp].async('blob');
           const imgUrl = URL.createObjectURL(blob);
 
-          const key = `${datePart}||${storeCode}`;
+          const finalProj = normalizeProjName(projLabel || detectedProject || file.name.split('_')[0]);
+
+          const key = `${datePart}||${storeCode.toUpperCase()}`;
           if (!storeMap[key]) {
             storeMap[key] = {
               key, date: datePart, storeCode, storeName,
-              projLabel: projLabel || detectedProject || file.name.split('_')[0],
+              projLabel: finalProj,
               ciPhotos: [], coPhotos: [],
               ciBlobs:  [], coBlobs:  [],
               ciTime: null, coTime: null,
@@ -282,10 +347,11 @@ export default function ReportView({ refreshKey }) {
         }
 
         const allDates = [...new Set(Object.values(storeMap).map(r => r.date))].sort();
+        const projName = normalizeProjName(detectedProject || file.name.split('_')[0]);
         newSessions.push({
           id:         `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
           fileName:   file.name,
-          project:    detectedProject || file.name.split('_')[0],
+          project:    projName,
           storeCount: Object.keys(storeMap).length,
           imageCount: imagePaths.length,
           dates:      allDates,
@@ -299,7 +365,6 @@ export default function ReportView({ refreshKey }) {
 
     if (newSessions.length) {
       setSessions(prev => [...prev, ...newSessions]);
-      // Auto-select latest date from uploaded zip files
       const zipDates = newSessions.flatMap(s => s.dates);
       if (zipDates.length > 0) {
         const latest = zipDates.sort()[zipDates.length - 1];
@@ -318,7 +383,7 @@ export default function ReportView({ refreshKey }) {
     setSelectedRow(null);
   }, []);
 
-  /* Merged zip lookup: "date||storeCode" → record */
+  /* Merged zip lookup */
   const mergedZipMap = useMemo(() => {
     const m = new Map();
     for (const sess of sessions) {
@@ -336,9 +401,7 @@ export default function ReportView({ refreshKey }) {
     return m;
   }, [sessions]);
 
-  /* ═══════════════════════════════════════════════════════════════
-     OCR: run when user selects a row (lazy, on demand)
-     ═══════════════════════════════════════════════════════════════ */
+  /* OCR trigger */
   const triggerOCR = useCallback(async (rowId, ciBlobs, coBlobs) => {
     setOcrState(prev => ({ ...prev, [rowId]: 'scanning' }));
     try {
@@ -350,19 +413,18 @@ export default function ReportView({ refreshKey }) {
     }
   }, []);
 
-  /* ═══════════════════════════════════════════════════════════════
-     SCHEDULE DATA
-     ═══════════════════════════════════════════════════════════════ */
+  /* SCHEDULE DATA */
   const scheduleRows = useMemo(() => {
     return masterData.map(m => {
       const isoDate = parseVNDate(m['Date'] || m['Ngày'] || '');
       if (!isoDate) return null;
+      const rawProj = (m['Project'] || '').trim();
       return {
         isoDate,
         storeCode:   (m['Store Code'] || m['Mart Code'] || '').trim(),
         storeName:   (m['Store Name'] || m['Mart Name'] || '').trim(),
-        project:     (m['Project'] || '').trim(),
-        brand:       (m['Brand'] || '').trim(),
+        project:     normalizeProjName(rawProj),
+        brand:       (m['Brand'] || '').trim() || normalizeProjName(rawProj),
         workingTime: (m['Working Time'] || '').trim(),
         sup:         (m['Sup'] || m['Supervisor'] || '').trim(),
         region:      (m['Region'] || '').trim(),
@@ -397,7 +459,7 @@ export default function ReportView({ refreshKey }) {
      ═══════════════════════════════════════════════════════════════ */
   const displayRows = useMemo(() => {
     const schedForDate = scheduleRows.filter(r => r.isoDate === selDate);
-    const zipForDate = [];
+    const zipForDate   = [];
     for (const v of mergedZipMap.values()) {
       if (v.date === selDate) zipForDate.push(v);
     }
@@ -407,13 +469,13 @@ export default function ReportView({ refreshKey }) {
 
     // 1. Loop Schedule entries and match with Zip
     schedForDate.forEach((sched, i) => {
-      let zip = mergedZipMap.get(`${sched.isoDate}||${sched.storeCode}`);
-      if (!zip) {
-        for (const z of zipForDate) {
-          if (matchedZipKeys.has(z.key)) continue;
-          if (z.storeCode.toUpperCase() === sched.storeCode.toUpperCase()) { zip = z; break; }
-          const zn = normStr(z.storeName), sn = normStr(sched.storeName);
-          if (sn && zn && (sn.includes(zn) || zn.includes(sn))) { zip = z; break; }
+      // Robust match
+      let zip = null;
+      for (const z of zipForDate) {
+        if (matchedZipKeys.has(z.key)) continue;
+        if (isStoreMatch(sched, z)) {
+          zip = z;
+          break;
         }
       }
 
@@ -430,7 +492,7 @@ export default function ReportView({ refreshKey }) {
       mergedRows.push({
         id:          rowId,
         date:        sched.isoDate,
-        project:     sched.project || zip?.projLabel || 'Chưa phân loại',
+        project:     normalizeProjName(sched.project || zip?.projLabel),
         brand:       sched.brand || zip?.projLabel || '—',
         storeCode:   zip?.storeCode || sched.storeCode,
         storeName:   zip?.storeName || sched.storeName,
@@ -452,12 +514,13 @@ export default function ReportView({ refreshKey }) {
       });
     });
 
-    // 2. Loop unmatched Zip entries (Stores from Zip not found in Master Schedule)
+    // 2. Loop unmatched Zip entries (Stores from Zip not matched to schedule)
     zipForDate.forEach((zip, i) => {
       if (matchedZipKeys.has(zip.key)) return;
 
-      const rowId  = `zip_${zip.date}_${zip.storeCode}_${i}`;
-      const ocr    = ocrState[rowId];
+      const normP = normalizeProjName(zip.projLabel);
+      const rowId = `zip_${zip.date}_${zip.storeCode}_${i}`;
+      const ocr   = ocrState[rowId];
       const ciTime = (ocr && ocr !== 'scanning') ? ocr.ciTime : '—';
       const coTime = (ocr && ocr !== 'scanning') ? ocr.coTime : '—';
       const status = ocr && ocr !== 'scanning' ? calcStatus(ocr.ciTime, null) : 'Đúng giờ';
@@ -465,8 +528,8 @@ export default function ReportView({ refreshKey }) {
       mergedRows.push({
         id:          rowId,
         date:        zip.date,
-        project:     zip.projLabel || 'Dự án Zip',
-        brand:       zip.projLabel || 'Zip',
+        project:     normP,
+        brand:       normP,
         storeCode:   zip.storeCode,
         storeName:   zip.storeName,
         workingTime: '—',
@@ -489,15 +552,17 @@ export default function ReportView({ refreshKey }) {
 
     // Filters
     let filtered = mergedRows;
-    if (selProject && selProject !== 'Tất cả')
-      filtered = filtered.filter(r => r.project === selProject || r.brand === selProject);
+    if (selProject && selProject !== 'Tất cả') {
+      const normSelP = normalizeProjName(selProject);
+      filtered = filtered.filter(r => r.project === normSelP || r.brand === normSelP);
+    }
     if (selStatus)
       filtered = filtered.filter(r => r.status === selStatus);
     if (search.trim()) {
-      const q = search.trim().toLowerCase();
+      const q = cleanStoreStr(search);
       filtered = filtered.filter(r =>
-        normStr(r.storeName).includes(q) || normStr(r.storeCode).includes(q) ||
-        normStr(r.sup).includes(q) || normStr(r.project).includes(q)
+        cleanStoreStr(r.storeName).includes(q) || cleanStoreStr(r.storeCode).includes(q) ||
+        cleanStoreStr(r.sup).includes(q) || cleanStoreStr(r.project).includes(q)
       );
     }
 
@@ -508,12 +573,15 @@ export default function ReportView({ refreshKey }) {
     return filtered;
   }, [scheduleRows, mergedZipMap, selDate, selProject, selStatus, search, ocrState]);
 
+  // Group BY PROJECT ONLY (So Schedule + Zip for NESTCAFE render in ONE single block)
   const groupedRows = useMemo(() => {
     const m = new Map();
     for (const r of displayRows) {
-      const k = `${r.project}||${r.brand}`;
-      if (!m.has(k)) m.set(k, { project: r.project, brand: r.brand, rows: [] });
-      m.get(k).rows.push(r);
+      const k = normalizeProjName(r.project);
+      if (!m.has(k)) m.set(k, { project: k, brand: r.brand, rows: [] });
+      const grp = m.get(k);
+      if (r.brand && r.brand !== '—' && r.brand !== k) grp.brand = r.brand;
+      grp.rows.push(r);
     }
     return [...m.values()];
   }, [displayRows]);
@@ -537,7 +605,7 @@ export default function ReportView({ refreshKey }) {
     const pdf = new jsPDF('l','mm','a3');
     let first = true;
     for (const grp of groupedRows) {
-      const el = projectRefs.current[`${grp.project}||${grp.brand}`];
+      const el = projectRefs.current[grp.project];
       if (!el) continue;
       const canvas = await html2canvas(el, { scale: 2, useCORS: true });
       if (!first) pdf.addPage();
@@ -815,7 +883,7 @@ export default function ReportView({ refreshKey }) {
       ) : (
         <div className="space-y-5">
           {groupedRows.map(grp => {
-            const gk = `${grp.project}||${grp.brand}`;
+            const gk = grp.project;
             const cnt = { on: grp.rows.filter(r=>r.status==='Đúng giờ').length, late: grp.rows.filter(r=>r.status==='Đi trễ').length, miss: grp.rows.filter(r=>r.status==='Chưa CI').length };
             return (
               <div key={gk} ref={el=>{ projectRefs.current[gk]=el; }}
@@ -828,7 +896,7 @@ export default function ReportView({ refreshKey }) {
                     </div>
                     <div>
                       <div className="text-white font-extrabold text-sm">{grp.project}</div>
-                      <div className="text-slate-400 text-[11px]">Brand: {grp.brand}</div>
+                      <div className="text-slate-400 text-[11px]">Brand: {grp.brand || grp.project}</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 text-[11px] font-bold flex-wrap">

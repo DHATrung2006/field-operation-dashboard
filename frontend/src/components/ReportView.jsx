@@ -33,15 +33,23 @@ function todayISO() {
 }
 function pad(n) { return String(n).padStart(2,'0'); }
 
+/** Extremely flexible date parser into YYYY-MM-DD */
 function parseVNDate(str) {
   if (!str) return null;
+  const s = String(str).trim();
   let m;
-  m = str.match(/(\d+)\s+tháng\s+(\d+),\s+(\d+)/i);
+  // "20 tháng 7, 2026" or "20 thg 07 2026"
+  m = s.match(/(\d+)\s+(?:tháng|thg)?\s*(\d+)[,\s]+(\d{4})/i);
   if (m) return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`;
-  m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  // "20/07/2026" or "20-07-2026" or "20.07.2026"
+  m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/);
   if (m) return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`;
-  m = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  // "2026-07-20" or "2026/07/20" or "2026-7-20"
+  m = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
   if (m) return `${m[1]}-${pad(+m[2])}-${pad(+m[3])}`;
+  // "20260720"
+  m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
   return null;
 }
 
@@ -60,7 +68,7 @@ function normStr(s) {
 /** Determine status: Đúng giờ / Đi trễ / Chưa CI */
 function calcStatus(ciTime, workingTime) {
   if (!ciTime || ciTime === '—') return 'Chưa CI';
-  if (!workingTime) return 'Đúng giờ';
+  if (!workingTime || workingTime === '—') return 'Đúng giờ';
   const sm = workingTime.match(/(\d{1,2}):(\d{2})/);
   const cm = ciTime.match(/(\d{1,2}):(\d{2})/);
   if (!sm || !cm) return 'Đúng giờ';
@@ -178,7 +186,6 @@ export default function ReportView({ refreshKey }) {
     for (const file of files) {
       setProgress(`Đang đọc: ${file.name}...`);
       try {
-        // KEY FIX: read into ArrayBuffer first to avoid stale-reference errors
         const arrayBuffer = await file.arrayBuffer();
         const zip = await JSZip.loadAsync(arrayBuffer);
 
@@ -207,25 +214,40 @@ export default function ReportView({ refreshKey }) {
             const p = parts[pi];
             if (!projFound) {
               const pj = detectProjFolder(p);
-              if (pj) { projLabel = pj; projFound = true; continue; }
+              if (pj) { projLabel = pj; projFound = true; }
             }
-            if (/^\d{8}$/.test(p)) {
-              datePart = `${p.slice(0,4)}-${p.slice(4,6)}-${p.slice(6,8)}`;
-              continue;
+            // Date detection in folder path
+            let dParsed = parseVNDate(p);
+            if (dParsed) { datePart = dParsed; continue; }
+
+            // Check if folder is project range like "PNG_20260720_20260726"
+            const rangeMatch = p.match(/^[A-Za-z&]+_(\d{8})/);
+            if (rangeMatch && !datePart) {
+              const ds = rangeMatch[1];
+              datePart = `${ds.slice(0,4)}-${ds.slice(4,6)}-${ds.slice(6,8)}`;
             }
-            if (p.includes('_') && !/^\d{8}$/.test(p)) shopPart = p;
+
+            if (p.includes('_') && !/^\d{8}$/.test(p) && !detectProjFolder(p)) shopPart = p;
           }
+
           // Fallback shop folder
           if (!shopPart && parts.length >= 2) {
             const parent = parts[parts.length - 2];
             if (!/^\d{8}$/.test(parent) && !detectProjFolder(parent)) shopPart = parent;
           }
-          if (!datePart) continue;
+
+          // Fallback date from filename if not in folder
+          if (!datePart) {
+            const fnDateMatch = fileName.match(/(\d{4})[_\-]?(\d{2})[_\-]?(\d{2})/);
+            if (fnDateMatch) datePart = `${fnDateMatch[1]}-${fnDateMatch[2]}-${fnDateMatch[3]}`;
+          }
+
+          if (!datePart) datePart = todayISO(); // ultimate fallback
           if (projLabel) detectedProject = projLabel;
 
           // Parse store code + name from "CODE_Name With Spaces"
-          let storeCode = shopPart;
-          let storeName = shopPart;
+          let storeCode = shopPart || 'STORE';
+          let storeName = shopPart || 'Store ' + (idx + 1);
           if (shopPart.includes('_')) {
             const ux = shopPart.indexOf('_');
             storeCode = shopPart.slice(0, ux);
@@ -243,9 +265,9 @@ export default function ReportView({ refreshKey }) {
           if (!storeMap[key]) {
             storeMap[key] = {
               key, date: datePart, storeCode, storeName,
-              projLabel: projLabel || detectedProject,
+              projLabel: projLabel || detectedProject || file.name.split('_')[0],
               ciPhotos: [], coPhotos: [],
-              ciBlobs:  [], coBlobs:  [],  // keep blobs for OCR later
+              ciBlobs:  [], coBlobs:  [],
               ciTime: null, coTime: null,
             };
           }
@@ -277,14 +299,16 @@ export default function ReportView({ refreshKey }) {
 
     if (newSessions.length) {
       setSessions(prev => [...prev, ...newSessions]);
-      // Auto-select date from first session
-      const firstDates = newSessions[0]?.dates;
-      if (firstDates?.length) setSelDate(firstDates[firstDates.length - 1]);
+      // Auto-select latest date from uploaded zip files
+      const zipDates = newSessions.flatMap(s => s.dates);
+      if (zipDates.length > 0) {
+        const latest = zipDates.sort()[zipDates.length - 1];
+        setSelDate(latest);
+      }
     }
 
     setIsProcessing(false);
     setProgress('');
-    // Reset file input so same file can be re-uploaded
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, []);
 
@@ -299,9 +323,8 @@ export default function ReportView({ refreshKey }) {
     const m = new Map();
     for (const sess of sessions) {
       for (const [k, v] of Object.entries(sess.storeMap)) {
-        if (!m.has(k)) m.set(k, v);
+        if (!m.has(k)) m.set(k, { ...v, ciPhotos:[...v.ciPhotos], coPhotos:[...v.coPhotos], ciBlobs:[...v.ciBlobs], coBlobs:[...v.coBlobs] });
         else {
-          // Merge photos
           const ex = m.get(k);
           ex.ciPhotos = [...ex.ciPhotos, ...v.ciPhotos];
           ex.coPhotos = [...ex.coPhotos, ...v.coPhotos];
@@ -347,56 +370,73 @@ export default function ReportView({ refreshKey }) {
     }).filter(Boolean);
   }, [masterData]);
 
+  // Dates union (Schedule + Uploaded Zips)
   const allScheduleDates = useMemo(() => {
     const s = new Set(scheduleRows.map(r => r.isoDate));
+    for (const sess of sessions) {
+      for (const d of sess.dates) s.add(d);
+    }
     const arr = [...s].sort();
     return arr.length ? arr : [todayISO()];
-  }, [scheduleRows]);
+  }, [scheduleRows, sessions]);
 
+  // Projects union on selDate
   const projectsOnDate = useMemo(() => {
-    const projs = [...new Set(
-      scheduleRows.filter(r => r.isoDate === selDate).map(r => r.project).filter(Boolean)
-    )].sort();
-    return ['Tất cả', ...projs];
-  }, [scheduleRows, selDate]);
+    const projs = new Set();
+    scheduleRows.filter(r => r.isoDate === selDate).forEach(r => { if (r.project) projs.add(r.project); });
+    for (const sess of sessions) {
+      for (const v of Object.values(sess.storeMap)) {
+        if (v.date === selDate && v.projLabel) projs.add(v.projLabel);
+      }
+    }
+    return ['Tất cả', ...[...projs].sort()];
+  }, [scheduleRows, sessions, selDate]);
 
   /* ═══════════════════════════════════════════════════════════════
-     BUILD DISPLAY ROWS — schedule is primary, zip adds evidence
+     BUILD DISPLAY ROWS — Merges Schedule & Uploaded Zip Stores
      ═══════════════════════════════════════════════════════════════ */
   const displayRows = useMemo(() => {
-    const dateRows = scheduleRows.filter(r => r.isoDate === selDate);
+    const schedForDate = scheduleRows.filter(r => r.isoDate === selDate);
+    const zipForDate = [];
+    for (const v of mergedZipMap.values()) {
+      if (v.date === selDate) zipForDate.push(v);
+    }
 
-    const rows = dateRows.map((sched, i) => {
-      // Find zip record: try storeCode exact match, then fuzzy name
+    const mergedRows = [];
+    const matchedZipKeys = new Set();
+
+    // 1. Loop Schedule entries and match with Zip
+    schedForDate.forEach((sched, i) => {
       let zip = mergedZipMap.get(`${sched.isoDate}||${sched.storeCode}`);
       if (!zip) {
-        // Try case-insensitive code
-        for (const [k, v] of mergedZipMap.entries()) {
-          if (!k.startsWith(sched.isoDate + '||')) continue;
-          if (v.storeCode.toUpperCase() === sched.storeCode.toUpperCase()) { zip = v; break; }
-          const zn = normStr(v.storeName), sn = normStr(sched.storeName);
-          if (sn && zn && (sn.includes(zn) || zn.includes(sn))) { zip = v; break; }
+        for (const z of zipForDate) {
+          if (matchedZipKeys.has(z.key)) continue;
+          if (z.storeCode.toUpperCase() === sched.storeCode.toUpperCase()) { zip = z; break; }
+          const zn = normStr(z.storeName), sn = normStr(sched.storeName);
+          if (sn && zn && (sn.includes(zn) || zn.includes(sn))) { zip = z; break; }
         }
       }
 
-      const rowId  = `${sched.isoDate}_${sched.storeCode}_${i}`;
+      if (zip) matchedZipKeys.add(zip.key);
+
+      const rowId  = `sched_${sched.isoDate}_${sched.storeCode}_${i}`;
       const ocr    = ocrState[rowId];
       const ciTime = (ocr && ocr !== 'scanning') ? ocr.ciTime : (zip ? '—' : null);
       const coTime = (ocr && ocr !== 'scanning') ? ocr.coTime : (zip ? '—' : null);
       const status = zip
-        ? (ocr && ocr !== 'scanning' ? calcStatus(ocr.ciTime, sched.workingTime) : 'Đúng giờ')  // optimistic until OCR
+        ? (ocr && ocr !== 'scanning' ? calcStatus(ocr.ciTime, sched.workingTime) : 'Đúng giờ')
         : 'Chưa CI';
 
-      return {
+      mergedRows.push({
         id:          rowId,
         date:        sched.isoDate,
-        project:     sched.project,
-        brand:       sched.brand,
+        project:     sched.project || zip?.projLabel || 'Chưa phân loại',
+        brand:       sched.brand || zip?.projLabel || '—',
         storeCode:   zip?.storeCode || sched.storeCode,
         storeName:   zip?.storeName || sched.storeName,
-        workingTime: sched.workingTime,
-        sup:         sched.sup,
-        region:      sched.region,
+        workingTime: sched.workingTime || '—',
+        sup:         sched.sup || '—',
+        region:      sched.region || '—',
         ciTime:      ciTime || '—',
         coTime:      coTime || '—',
         status,
@@ -409,10 +449,46 @@ export default function ReportView({ refreshKey }) {
         hasZip:      !!zip,
         ocrDone:     !!(ocr && ocr !== 'scanning'),
         ocrScanning: ocr === 'scanning',
-      };
+      });
     });
 
-    let filtered = rows;
+    // 2. Loop unmatched Zip entries (Stores from Zip not found in Master Schedule)
+    zipForDate.forEach((zip, i) => {
+      if (matchedZipKeys.has(zip.key)) return;
+
+      const rowId  = `zip_${zip.date}_${zip.storeCode}_${i}`;
+      const ocr    = ocrState[rowId];
+      const ciTime = (ocr && ocr !== 'scanning') ? ocr.ciTime : '—';
+      const coTime = (ocr && ocr !== 'scanning') ? ocr.coTime : '—';
+      const status = ocr && ocr !== 'scanning' ? calcStatus(ocr.ciTime, null) : 'Đúng giờ';
+
+      mergedRows.push({
+        id:          rowId,
+        date:        zip.date,
+        project:     zip.projLabel || 'Dự án Zip',
+        brand:       zip.projLabel || 'Zip',
+        storeCode:   zip.storeCode,
+        storeName:   zip.storeName,
+        workingTime: '—',
+        sup:         '—',
+        region:      '—',
+        ciTime,
+        coTime,
+        status,
+        ciPhotos:    zip.ciPhotos || [],
+        coPhotos:    zip.coPhotos || [],
+        ciPhoto:     zip.ciPhotos?.[0] || null,
+        coPhoto:     zip.coPhotos?.[0] || null,
+        ciBlobs:     zip.ciBlobs || [],
+        coBlobs:     zip.coBlobs || [],
+        hasZip:      true,
+        ocrDone:     !!(ocr && ocr !== 'scanning'),
+        ocrScanning: ocr === 'scanning',
+      });
+    });
+
+    // Filters
+    let filtered = mergedRows;
     if (selProject && selProject !== 'Tất cả')
       filtered = filtered.filter(r => r.project === selProject || r.brand === selProject);
     if (selStatus)
@@ -443,7 +519,7 @@ export default function ReportView({ refreshKey }) {
   }, [displayRows]);
 
   /* ── KPIs ── */
-  const totalScheduled = scheduleRows.filter(r => r.isoDate === selDate).length;
+  const totalScheduled = displayRows.length;
   const onTimeCount    = displayRows.filter(r => r.status === 'Đúng giờ').length;
   const lateCount      = displayRows.filter(r => r.status === 'Đi trễ').length;
   const missingCount   = displayRows.filter(r => r.status === 'Chưa CI').length;
@@ -668,7 +744,7 @@ export default function ReportView({ refreshKey }) {
       {/* ── KPIs (4 boxes) ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { icon:'fa-store',                label:'Tổng Store (Lịch Hôm Nay)', value:totalScheduled, color:'blue',    tooltip:`${totalScheduled} store có lịch làm ngày ${selDate}` },
+          { icon:'fa-store',                label:'Tổng Store (Lịch Hôm Nay)', value:totalScheduled, color:'blue',    tooltip:`${totalScheduled} store hiển thị ngày ${selDate}` },
           { icon:'fa-circle-check',         label:'Check-In Đúng Giờ',         value:onTimeCount,    color:'emerald' },
           { icon:'fa-clock',                label:'Check-In Đi Trễ',           value:lateCount,      color:'amber'   },
           { icon:'fa-triangle-exclamation', label:'Chưa CI / Vắng Mặt',        value:missingCount,   color:'rose'    },
@@ -734,7 +810,7 @@ export default function ReportView({ refreshKey }) {
         <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center text-slate-400 shadow-xs">
           <i className="fa-solid fa-inbox text-4xl text-slate-200 mb-3 block" />
           <div className="font-bold text-sm">Không có dữ liệu cho ngày {selDate}.</div>
-          <div className="text-xs mt-1">Kiểm tra lại Google Sheet hoặc chọn ngày khác.</div>
+          <div className="text-xs mt-1">Hãy chọn ngày khác ở bộ lọc phía trên hoặc upload file Zip.</div>
         </div>
       ) : (
         <div className="space-y-5">

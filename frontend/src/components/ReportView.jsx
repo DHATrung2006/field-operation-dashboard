@@ -175,6 +175,12 @@ function timeFromFilename(fileName) {
   return null;
 }
 
+/** A CI photo must live inside a folder named exactly "CI" (case-insensitive). */
+function isCiImagePath(filePath) {
+  const parts = filePath.replace(/\\/g, '/').split('/').filter(Boolean);
+  return parts.slice(0, -1).some(part => part.trim().toUpperCase() === 'CI');
+}
+
 /** 
  * Parse UFF zip path precisely:
  * Project_DateRange / Date / StoreCode_StoreName / EmpCode_EmpName / CI / filename
@@ -361,84 +367,112 @@ function calcStatus(ciTime, workingTime) {
   return ciMins > schedMins + 5 ? 'Đi trễ' : 'Đúng giờ';
 }
 
-/* ─── OCR via Tesseract.js (FULL IMAGE SCAN — any corner / position) ───────────────────── */
+/* ─── OCR via Tesseract.js ─────────────────────────────────────────────── */
 let _tesseractWorker = null;
 
 async function getOCRWorker() {
   if (!_tesseractWorker) {
     const { createWorker } = await import('tesseract.js');
     _tesseractWorker = await createWorker('eng');
+    // The watermark only needs numbers, separators and AM/PM. Limiting the
+    // character set substantially improves recognition against busy photos.
+    await _tesseractWorker.setParameters({
+      tessedit_pageseg_mode: '11', // sparse text, suitable for a watermark
+      tessedit_char_whitelist: '0123456789/:.- AMPMapm',
+    });
   }
   return _tesseractWorker;
 }
 
 /**
- * Scan ENTIRE image canvas to extract watermark timestamp (top-right, top-left, bottom, etc.)
+ * Make a black-on-white image containing bright, near-white pixels only.
+ * UFF camera watermarks are white, so this removes most of the photo behind it.
+ */
+function isolateWhiteWatermark(canvas, ctx) {
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const pixels = imageData.data;
+
+  for (let i = 0; i < pixels.length; i += 4) {
+    const r = pixels[i];
+    const g = pixels[i + 1];
+    const b = pixels[i + 2];
+    const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+    const colourSpread = Math.max(r, g, b) - Math.min(r, g, b);
+    const isWhiteText = brightness >= 168 && colourSpread <= 85;
+    const value = isWhiteText ? 0 : 255;
+    pixels[i] = value;
+    pixels[i + 1] = value;
+    pixels[i + 2] = value;
+    pixels[i + 3] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function makeCropCanvas(bitmap, region, scale) {
+  const width = Math.max(1, Math.round(region.width * scale));
+  const height = Math.max(1, Math.round(region.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(
+    bitmap,
+    region.x, region.y, region.width, region.height,
+    0, 0, width, height,
+  );
+  return { canvas, ctx };
+}
+
+/**
+ * Scan every edge of the image, because UFF's watermark can appear in a
+ * different corner/side. A full-image pass is kept as a fallback.
  */
 async function ocrTimeFromBlob(blob) {
+  let bitmap;
   try {
-    const bitmap = await createImageBitmap(blob);
+    bitmap = await createImageBitmap(blob);
     const worker = await getOCRWorker();
 
-    const runOCR = async (canvas) => {
+    const maxDimension = 2200;
+    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+    const w = bitmap.width;
+    const h = bitmap.height;
+    const edgeWidth = Math.max(1, Math.round(w * 0.48));
+    const edgeHeight = Math.max(1, Math.round(h * 0.48));
+    const regions = [
+      { x: 0, y: 0, width: w, height: edgeHeight, label: 'top' },
+      { x: 0, y: h - edgeHeight, width: w, height: edgeHeight, label: 'bottom' },
+      { x: 0, y: 0, width: edgeWidth, height: h, label: 'left' },
+      { x: w - edgeWidth, y: 0, width: edgeWidth, height: h, label: 'right' },
+      { x: 0, y: 0, width: w, height: h, label: 'full' },
+    ];
+
+    for (const region of regions) {
+      const { canvas, ctx } = makeCropCanvas(bitmap, region, scale);
+      isolateWhiteWatermark(canvas, ctx);
       const { data } = await worker.recognize(canvas);
-      return extractTimeText(data.text);
-    };
-
-    const drawAndInvert = (canvas, ctx, w, h) => {
-      const imgData = ctx.getImageData(0, 0, w, h);
-      const d = imgData.data;
-      let brightPx = 0;
-      for (let i = 0; i < d.length; i += 4) {
-        if (d[i] > 128) brightPx++;
-      }
-      if (brightPx < (d.length / 4) * 0.5) {
-        for (let i = 0; i < d.length; i += 4) {
-          d[i] = 255 - d[i];
-          d[i+1] = 255 - d[i+1];
-          d[i+2] = 255 - d[i+2];
-        }
-        ctx.putImageData(imgData, 0, 0);
-      }
-    };
-
-    const maxDim = 1200;
-    let w = bitmap.width;
-    let h = bitmap.height;
-    if (w > maxDim || h > maxDim) {
-      if (w > h) {
-        h = Math.round((h * maxDim) / w);
-        w = maxDim;
-      } else {
-        w = Math.round((w * maxDim) / h);
-        h = maxDim;
-      }
+      const time = extractTimeText(data.text);
+      if (time) return time;
     }
 
-    // 1. Normal Orientation
-    const canvas = document.createElement('canvas');
-    canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(bitmap, 0, 0, w, h);
-    drawAndInvert(canvas, ctx, w, h);
-
-    let time = await runOCR(canvas);
-    if (time) return time;
-
-    // 2. Rotated 90 degrees CW (Right vertical text)
-    const canvas90 = document.createElement('canvas');
-    canvas90.width = h; canvas90.height = w;
-    const ctx90 = canvas90.getContext('2d');
-    ctx90.translate(h / 2, w / 2);
-    ctx90.rotate(90 * Math.PI / 180);
-    ctx90.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height, -w / 2, -h / 2, w, h);
-    drawAndInvert(canvas90, ctx90, h, w);
-
-    time = await runOCR(canvas90);
-    if (time) return time;
-
+    // Some photos compress the white watermark to light grey. Retry one full
+    // image in its original colours before reporting that it cannot be read.
+    const { canvas } = makeCropCanvas(bitmap, { x: 0, y: 0, width: w, height: h }, scale);
+    const { data } = await worker.recognize(canvas);
+    return extractTimeText(data.text);
   } catch (e) {
     console.warn('OCR failed:', e.message);
+    return null;
+  } finally {
+    bitmap?.close?.();
+  }
+}
+
+/** Try each CI photo because the first one may not contain a readable clock. */
+async function ocrTimeFromBlobs(blobs) {
+  for (const blob of blobs) {
+    const time = await ocrTimeFromBlob(blob);
+    if (time) return time;
   }
   return null;
 }
@@ -499,8 +533,8 @@ export default function ReportView({ refreshKey }) {
         const imagePaths = Object.keys(zip.files).filter(fp => {
           if (zip.files[fp].dir) return false;
           if (!/\.(jpg|jpeg|png|webp)$/i.test(fp)) return false;
-          // ONLY pick images from CI or CHECKIN folders
-          return /\/(CI|CHECKIN)\//i.test(fp.replace(/\\/g, '/'));
+          // Only use photos stored in a folder named exactly "CI".
+          return isCiImagePath(fp);
         });
 
         setProgress(`${file.name}: phân tích ${imagePaths.length} ảnh...`);
@@ -542,13 +576,14 @@ export default function ReportView({ refreshKey }) {
           }
         }
 
-        // Auto OCR background scanning for stores without filename time
+        // Auto OCR background scanning for stores without filename time.
+        // Check every CI image for the store, not only the first one.
         const storeEntries = Object.values(storeMap);
         for (let sIdx = 0; sIdx < storeEntries.length; sIdx++) {
           const rec = storeEntries[sIdx];
           if (!rec.ciTime && rec.ciBlobs.length > 0) {
             setProgress(`${file.name}: Đang đọc giờ Check-In (${sIdx+1}/${storeEntries.length} store)...`);
-            const scannedTime = await ocrTimeFromBlob(rec.ciBlobs[0]);
+            const scannedTime = await ocrTimeFromBlobs(rec.ciBlobs);
             if (scannedTime) rec.ciTime = scannedTime;
           }
         }
@@ -619,7 +654,7 @@ export default function ReportView({ refreshKey }) {
   const triggerOCR = useCallback(async (rowId, ciBlobs) => {
     setOcrState(prev => ({ ...prev, [rowId]: 'scanning' }));
     try {
-      const ciTime = ciBlobs.length ? await ocrTimeFromBlob(ciBlobs[0]) : null;
+      const ciTime = ciBlobs.length ? await ocrTimeFromBlobs(ciBlobs) : null;
       setOcrState(prev => ({ ...prev, [rowId]: { ciTime: ciTime || '—' } }));
     } catch {
       setOcrState(prev => ({ ...prev, [rowId]: { ciTime: '—' } }));
@@ -922,7 +957,7 @@ export default function ReportView({ refreshKey }) {
           </div>
 
           <p className="text-xs text-slate-400 leading-relaxed">
-            Mỗi dự án xuất <strong className="text-teal-200">một file Zip riêng</strong> từ web UFF → upload từng file. Hệ thống tự tích lũy dữ liệu.
+            Mỗi dự án xuất <strong className="text-teal-200">một file Zip riêng</strong> từ web UFF → upload từng file. Hệ thống chỉ lấy ảnh trong thư mục <code className="text-teal-300">CI</code> và tự tích lũy dữ liệu.
             <br/>Cấu trúc: <code className="text-teal-300 text-[10px]">Project_DateRange / Date / StoreCode_StoreName / EmpCode_EmpName / CI / xxx.jpg</code>
           </p>
 
@@ -946,7 +981,7 @@ export default function ReportView({ refreshKey }) {
               <div className="text-center py-1">
                 <i className="fa-solid fa-cloud-arrow-up text-3xl text-teal-400 mb-2" />
                 <div className="text-xs font-bold text-slate-200">Nhấn để chọn hoặc kéo thả file Zip vào đây</div>
-                <div className="text-[10px] text-slate-500 mt-0.5">Có thể chọn nhiều file cùng lúc · Giờ CI đọc từ chữ trên ảnh (OCR tự động toàn ảnh)</div>
+                <div className="text-[10px] text-slate-500 mt-0.5">Có thể chọn nhiều file cùng lúc · Chỉ đọc ảnh trong CI · OCR tự động giờ trên ảnh</div>
               </div>
             )}
           </label>
@@ -1016,8 +1051,8 @@ export default function ReportView({ refreshKey }) {
               <i className="fa-solid fa-eye text-indigo-600" /> Đọc Giờ Từ Ảnh (OCR Toàn Ảnh)
             </div>
             <p className="text-[11px] text-indigo-700 leading-relaxed">
-              Hệ thống quét <strong>toàn bộ diện tích ảnh</strong> để tìm watermark ngày giờ, hỗ trợ AM/PM và mọi vị trí trên ảnh.
-              <br/>OCR tự động chạy ngầm ngay khi upload Zip.
+              Hệ thống quét các cạnh trên/dưới/trái/phải, ưu tiên watermark <strong>chữ trắng</strong>, hỗ trợ ngày giờ AM/PM ở mọi góc ảnh.
+              <br/>Nếu ảnh đầu chưa đọc được, hệ thống tự quét các ảnh CI còn lại của store.
             </p>
             <div className="text-[10px] text-indigo-500 bg-indigo-100 rounded-lg px-2.5 py-1.5">
               💡 Tự động khớp store code & gộp vào lịch làm việc.

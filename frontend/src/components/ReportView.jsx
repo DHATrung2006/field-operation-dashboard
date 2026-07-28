@@ -903,7 +903,7 @@ export default function ReportView({ refreshKey }) {
           </div>
 
           <p className="text-xs text-slate-400 leading-relaxed">
-            Mỗi dự án xuất <strong className="text-teal-200">một file Zip riêng</strong> từ web UFF → upload từng file. Tích hợp sẵn cho tất cả dự án: P&G, MAGGI, NESTCAFE, VINDA, STMB, Unilever, AEON, LOTTE, COOP, WINMART, BIG C / GO, EMART, MEGA MARKET, LAN CHI...
+            Mỗi dự án xuất <strong className="text-teal-200">một file Zip riêng</strong> từ web UFF → upload từng file. Hệ thống tự tích lũy dữ liệu.
             <br/>Cấu trúc: <code className="text-teal-300 text-[10px]">Project_DateRange / Date / StoreCode_StoreName / EmpCode_EmpName / CI / xxx.jpg</code>
           </p>
 
@@ -994,13 +994,14 @@ export default function ReportView({ refreshKey }) {
           {/* OCR Info box */}
           <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 space-y-2">
             <div className="flex items-center gap-2 text-indigo-800 font-bold text-xs">
-              <i className="fa-solid fa-eye text-indigo-600" /> Tích Hợp Tất Cả Dự Án & OCR Toàn Ảnh
+              <i className="fa-solid fa-eye text-indigo-600" /> Đọc Giờ Từ Ảnh (OCR Toàn Ảnh)
             </div>
             <p className="text-[11px] text-indigo-700 leading-relaxed">
-              Tích hợp sẵn bộ nhận diện cho <strong>tất cả dự án/chuỗi siêu thị</strong>: P&G, MAGGI, NESTCAFE, VINDA, STMB, Unilever, AEON, LOTTE, COOP, WINMART, BIG C / GO, EMART, MEGA MARKET, LAN CHI...
+              Hệ thống quét <strong>toàn bộ diện tích ảnh</strong> để tìm watermark ngày giờ, hỗ trợ AM/PM và mọi vị trí trên ảnh.
+              <br/>OCR tự động chạy ngầm ngay khi upload Zip.
             </p>
             <div className="text-[10px] text-indigo-500 bg-indigo-100 rounded-lg px-2.5 py-1.5">
-              💡 Tự động khớp store code & gộp vào lịch làm việc chính xác 100%.
+              💡 Tự động khớp store code & gộp vào lịch làm việc.
             </div>
           </div>
         </div>

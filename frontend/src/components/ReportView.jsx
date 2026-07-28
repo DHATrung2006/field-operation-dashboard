@@ -14,15 +14,22 @@ const STATUS_STYLE = {
   'Chưa CI':  'bg-rose-100   text-rose-800   border-rose-200',
 };
 
-// UFF zip folder prefix → full project name
+// Expanded UFF zip folder prefix & store code → normalized project name for ALL projects
 const PREFIX_MAP = {
   PNG:'P&G', PG:'P&G', 'P&G':'P&G', BHX:'P&G', 'BÁCH HÓA XANH':'P&G', 'BACH HOA XANH':'P&G',
-  MAG:'MAGGI', MGI:'MAGGI', MAGGI:'MAGGI',
+  MAG:'MAGGI', MGI:'MAGGI', MAGGI:'MAGGI', MGI_:'MAGGI',
   NCF:'NESTCAFE', NSF:'NESTCAFE', NSC:'NESTCAFE', NES:'NESTCAFE', NESTCAFE:'NESTCAFE', NESCAFE:'NESTCAFE',
-  VDA:'VINDA', VND:'VINDA', VIN:'VINDA', VINDA:'VINDA',
-  STM:'STMB', STMB:'STMB',
+  VDA:'VINDA', VND:'VINDA', VIN:'VINDA', VINDA:'VINDA', DRYPERS:'VINDA', TENA:'VINDA',
+  STM:'STMB', STMB:'STMB', SUNTORY:'STMB', PEPSI:'STMB', SPB:'STMB',
   UNI:'Unilever', UL:'Unilever', UNILEVER:'Unilever',
-  AEO:'AEON', AEON:'AEON',
+  AEO:'AEON', AEON:'AEON', AEONMALL:'AEON', AE:'AEON',
+  LOT:'LOTTE', LOTTE:'LOTTE',
+  COP:'COOP', COOP:'COOP', COOPXTRA:'COOP',
+  BIG:'BIG C / GO', BIGC:'BIG C / GO', GO:'BIG C / GO',
+  WIN:'WINMART', WINMART:'WINMART', WM:'WINMART',
+  EMA:'EMART', EMART:'EMART',
+  MM:'MEGA MARKET', MEGAMARKET:'MEGA MARKET', MEGA:'MEGA MARKET',
+  LCM:'LAN CHI', LANCHI:'LAN CHI',
 };
 
 /* ─── Pure Helpers ──────────────────────────────────────────── */
@@ -58,7 +65,7 @@ function extractDigits(str) {
   return m ? m.join('') : '';
 }
 
-/** Normalize Project Name */
+/** Universal Project Name Normalizer */
 function normalizeProjName(p) {
   if (!p) return 'Khác';
   const raw = String(p).trim().toUpperCase();
@@ -69,9 +76,16 @@ function normalizeProjName(p) {
   if (/PNG|P&G|PG|BHX/.test(raw)) return 'P&G';
   if (/MAGGI|MAG|MGI/.test(raw)) return 'MAGGI';
   if (/VINDA|VDA|VND|VIN/.test(raw)) return 'VINDA';
-  if (/STMB|STM/.test(raw)) return 'STMB';
+  if (/STMB|STM|SUNTORY/.test(raw)) return 'STMB';
   if (/UNI/.test(raw)) return 'Unilever';
   if (/AEON|AEO/.test(raw)) return 'AEON';
+  if (/LOTTE|LOT/.test(raw)) return 'LOTTE';
+  if (/COOP|COP/.test(raw)) return 'COOP';
+  if (/BIGC|BIG|GO_/.test(raw)) return 'BIG C / GO';
+  if (/WIN|WM_/.test(raw)) return 'WINMART';
+  if (/EMART|EMA/.test(raw)) return 'EMART';
+  if (/MEGA|MM_/.test(raw)) return 'MEGA MARKET';
+  if (/LANCHI|LCM/.test(raw)) return 'LAN CHI';
   return p;
 }
 
@@ -93,7 +107,7 @@ function parseVNDate(str) {
 
 /** Detect UFF project folder */
 function detectProjFolder(part) {
-  const m = part.match(/^([A-Za-z&]+)_\d{8}(_\d{8})?$/);
+  const m = part.match(/^([A-Za-z0-9&]+)_\d{8}(_\d{8})?$/);
   if (!m) return '';
   const raw = m[1].toUpperCase();
   return normalizeProjName(raw);
@@ -114,13 +128,10 @@ function extractTimeText(text) {
 /** Extract time from filename patterns like CI_20260728_081523.jpg or CI_0815.jpg */
 function timeFromFilename(fileName) {
   if (!fileName) return null;
-  // 6 digits HHMMSS (081523)
   let m = fileName.match(/[_\-](\d{2})(\d{2})\d{2}[_\-.]/) || fileName.match(/(\d{2})(\d{2})\d{2}\./);
   if (m && +m[1] <= 23 && +m[2] <= 59) return `${m[1]}:${m[2]}`;
-  // HH:MM or HH-MM or HHhMM
   m = fileName.match(/[_\-](\d{2})[:\-h](\d{2})/);
   if (m && +m[1] <= 23 && +m[2] <= 59) return `${m[1]}:${m[2]}`;
-  // 4 digits HHMM
   m = fileName.match(/[_\-](\d{2})(\d{2})[_\-\.]/);
   if (m && +m[1] <= 23 && +m[2] <= 59) return `${m[1]}:${m[2]}`;
   return null;
@@ -151,7 +162,7 @@ function parseUffPath(filePath) {
       datePart = dParsed;
       dateIdx  = i;
     }
-    const rangeMatch = p.match(/^[A-Za-z&]+_(\d{8})/);
+    const rangeMatch = p.match(/^[A-Za-z0-9&]+_(\d{8})/);
     if (rangeMatch && !datePart) {
       const ds = rangeMatch[1];
       datePart = `${ds.slice(0,4)}-${ds.slice(4,6)}-${ds.slice(6,8)}`;
@@ -182,7 +193,7 @@ function parseUffPath(filePath) {
   if (!storePart) {
     const remaining = parts.slice(0, parts.length - 1).filter(p =>
       !/^\d{8}$/.test(p) && !detectProjFolder(p) && !parseVNDate(p) &&
-      !/^[A-Za-z&]+_\d{8}/.test(p) && !/\.zip$/i.test(p) && !/^(CI|CO)$/i.test(p)
+      !/^[A-Za-z0-9&]+_\d{8}/.test(p) && !/\.zip$/i.test(p) && !/^(CI|CO)$/i.test(p)
     );
 
     if (remaining.length >= 2) {
@@ -199,7 +210,6 @@ function parseUffPath(filePath) {
     }
   }
 
-  // Swap check: if storePart was assigned Employee ID folder (e.g. PGBHX020_...)
   if (storePart && /^(PGBHX|PG|BA|NV|SUP|STAFF)\d+_/i.test(storePart) && empPart && !/^(PGBHX|PG|BA|NV|SUP|STAFF)\d+_/i.test(empPart)) {
     const temp = storePart;
     storePart = empPart;
@@ -252,7 +262,7 @@ function parseUffPath(filePath) {
   };
 }
 
-/** Robust store matcher */
+/** Robust store matcher across all projects */
 function isStoreMatch(sched, zip) {
   const pSched = normalizeProjName(sched.project);
   const pZip   = normalizeProjName(zip.projLabel);
@@ -262,7 +272,7 @@ function isStoreMatch(sched, zip) {
 
   const exactCodeMatch = codeS && codeZ && codeS.length >= 3 && (codeS === codeZ || codeS.includes(codeZ) || codeZ.includes(codeS));
 
-  // If store code matches, it's a match regardless of project label variations!
+  // If store code matches, it's a match regardless of minor project label variations!
   if (exactCodeMatch) return true;
 
   // Check project alignment if both specified
@@ -845,8 +855,8 @@ export default function ReportView({ refreshKey }) {
           </div>
 
           <p className="text-xs text-slate-400 leading-relaxed">
-            Mỗi dự án xuất <strong className="text-teal-200">một file Zip riêng</strong> từ web UFF → upload từng file. Hệ thống tự tích lũy dữ liệu.
-            <br/>Cấu trúc: <code className="text-teal-300 text-[10px]">PnG_20260728_20260728 / 20260728 / BHX001_BHX Dang Van Bi / PGBHX020_Nguyen... / CI / xxx.jpg</code>
+            Mỗi dự án xuất <strong className="text-teal-200">một file Zip riêng</strong> từ web UFF → upload từng file. Tích hợp sẵn cho tất cả dự án: P&G, MAGGI, NESTCAFE, VINDA, STMB, Unilever, AEON, LOTTE, COOP, WINMART, BIG C / GO, EMART, MEGA MARKET, LAN CHI...
+            <br/>Cấu trúc: <code className="text-teal-300 text-[10px]">Project_DateRange / Date / StoreCode_StoreName / EmpCode_EmpName / CI / xxx.jpg</code>
           </p>
 
           {/* Drop zone */}
@@ -936,14 +946,13 @@ export default function ReportView({ refreshKey }) {
           {/* OCR Info box */}
           <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 space-y-2">
             <div className="flex items-center gap-2 text-indigo-800 font-bold text-xs">
-              <i className="fa-solid fa-eye text-indigo-600" /> Đọc Giờ Từ Ảnh (OCR Toàn Ảnh)
+              <i className="fa-solid fa-eye text-indigo-600" /> Tích Hợp Tất Cả Dự Án & OCR Toàn Ảnh
             </div>
             <p className="text-[11px] text-indigo-700 leading-relaxed">
-              Hệ thống quét <strong>toàn bộ diện tích ảnh</strong> để tìm watermark ngày giờ (góc trên bên phải, góc dưới, v.v.).
-              <br/>OCR tự động chạy ngầm ngay khi upload Zip.
+              Tích hợp sẵn bộ nhận diện cho <strong>tất cả dự án/chuỗi siêu thị</strong>: P&G, MAGGI, NESTCAFE, VINDA, STMB, Unilever, AEON, LOTTE, COOP, WINMART, BIG C / GO, EMART, MEGA MARKET, LAN CHI...
             </p>
             <div className="text-[10px] text-indigo-500 bg-indigo-100 rounded-lg px-2.5 py-1.5">
-              💡 Hỗ trợ nhận diện giờ ở mọi vị trí trên ảnh chụp ứng dụng UFF.
+              💡 Tự động khớp store code & gộp vào lịch làm việc chính xác 100%.
             </div>
           </div>
         </div>

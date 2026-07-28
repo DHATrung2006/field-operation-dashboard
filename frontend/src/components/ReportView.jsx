@@ -118,52 +118,29 @@ function detectProjFolder(part) {
 
 /** 
  * Extract time from OCR text — handles AM/PM, 12h→24h, Vietnamese SA/CH.
- * Specifically parses date+time lines like "28/07/2026 01:53:01 PM" or "08:03:31 AM".
+ * Prioritizes AM/PM patterns to avoid picking up random numbers as times.
  */
-function extractTimeText(rawText) {
-  if (!rawText) return null;
-  let text = String(rawText)
-    .replace(/[PN]M\b/gi, 'PM')
-    .replace(/A[MN]\b/gi, 'AM')
-    .replace(/S[AH]\b/gi, 'SA')
-    .replace(/C[H]\b/gi, 'CH');
-
+function extractTimeText(text) {
+  if (!text) return null;
   let match;
 
-  // 1. Explicit Date + Time pattern: "28/07/2026 01:53:01 PM" or "2026-07-28 08:03:31 AM"
-  const dateTimeRegex = /\b\d{1,4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,4}\s+([01]?\d|2[0-3])[:\.](\d{2})(?:[:\.](\d{2}))?\s*(AM|PM|SA|CH)?/gi;
-  while ((match = dateTimeRegex.exec(text)) !== null) {
-    let h = parseInt(match[1]);
-    const min = parseInt(match[2]);
-    const period = (match[4] || '').toUpperCase();
-    if (min <= 59) {
-      if (period === 'PM' || period === 'CH') {
-        if (h < 12) h += 12;
-      } else if (period === 'AM' || period === 'SA') {
-        if (h === 12) h = 0;
-      }
-      return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
-    }
-  }
-
-  // 2. AM/PM or SA/CH pattern with explicit colon: "01:53:01 PM", "8:03:31 AM", "02:27 PM"
-  const ampmRegex = /\b([01]?\d|2[0-3])[:\.](\d{2})(?:[:\.](\d{2}))?\s*(AM|PM|SA|CH)\b/gi;
+  // 1. AM/PM format with lenient spacing (e.g. "01: 53: 01 P M")
+  const ampmRegex = /(\d{1,2})[\s:\.]*(\d{2})(?:[\s:\.]*(\d{2}))?\s*(AM|PM|A\.M\.|P\.M\.|SA|CH|P\s*M|A\s*M)/ig;
   while ((match = ampmRegex.exec(text)) !== null) {
     let h = parseInt(match[1]);
     const min = parseInt(match[2]);
-    const period = match[4].toUpperCase();
-    if (h >= 0 && h <= 23 && min <= 59) {
-      if (period === 'PM' || period === 'CH') {
-        if (h < 12) h += 12;
-      } else if (period === 'AM' || period === 'SA') {
-        if (h === 12) h = 0;
-      }
-      return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+    const period = match[4].replace(/\s/g, '').toUpperCase();
+    if (h < 1 || h > 12 || min > 59) continue;
+    if (period.includes('PM') || period.includes('CH') || period === 'P.M.') {
+      if (h !== 12) h += 12;
+    } else {
+      if (h === 12) h = 0;
     }
+    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
   }
 
-  // 3. Full HH:MM:SS 24-hour pattern: "13:53:01" or "08:03:31"
-  const fullTimeRegex = /\b([01]?\d|2[0-3])[:\.](\d{2})[:\.](\d{2})\b/g;
+  // 2. Full HH:MM:SS (24h)
+  const fullTimeRegex = /(\d{1,2})[\s:\.]+(\d{2})[\s:\.]+(\d{2})/g;
   while ((match = fullTimeRegex.exec(text)) !== null) {
     const h = parseInt(match[1]);
     const min = parseInt(match[2]);
@@ -173,8 +150,8 @@ function extractTimeText(rawText) {
     }
   }
 
-  // 4. Standalone HH:MM pattern (5h to 22h)
-  const shortTimeRegex = /\b([01]?\d|2[0-3])[:\.](\d{2})\b/g;
+  // 3. HH:MM (24h) only
+  const shortTimeRegex = /\b(\d{1,2})[\s:\.]+(\d{2})\b/g;
   while ((match = shortTimeRegex.exec(text)) !== null) {
     const h = parseInt(match[1]);
     const min = parseInt(match[2]);
@@ -384,7 +361,7 @@ function calcStatus(ciTime, workingTime) {
   return ciMins > schedMins + 5 ? 'Đi trễ' : 'Đúng giờ';
 }
 
-/* ─── OCR via Tesseract.js — with ROTATION support for vertical watermarks ───────────── */
+/* ─── OCR via Tesseract.js (FULL IMAGE SCAN — any corner / position) ───────────────────── */
 let _tesseractWorker = null;
 
 async function getOCRWorker() {
@@ -395,84 +372,69 @@ async function getOCRWorker() {
   return _tesseractWorker;
 }
 
-/** Create a canvas from bitmap at given rotation angle (0, 90, 180, 270) */
-function createRotatedCanvas(bitmap, w, h, angleDeg) {
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  const isPortrait = angleDeg === 90 || angleDeg === 270;
-  canvas.width  = isPortrait ? h : w;
-  canvas.height = isPortrait ? w : h;
-  ctx.save();
-  ctx.translate(canvas.width / 2, canvas.height / 2);
-  ctx.rotate((angleDeg * Math.PI) / 180);
-  ctx.drawImage(bitmap, -w / 2, -h / 2, w, h);
-  ctx.restore();
-  return canvas;
-}
-
-/** Crop a strip from one edge of a canvas */
-function cropEdgeStrip(srcCanvas, edge, fraction) {
-  const sw = srcCanvas.width;
-  const sh = srcCanvas.height;
-  const strip = document.createElement('canvas');
-  const ctx = strip.getContext('2d');
-  let sx, sy, cw, ch;
-  if (edge === 'right')  { cw = Math.round(sw * fraction); ch = sh; sx = sw - cw; sy = 0; }
-  else if (edge === 'left')   { cw = Math.round(sw * fraction); ch = sh; sx = 0; sy = 0; }
-  else if (edge === 'top')    { cw = sw; ch = Math.round(sh * fraction); sx = 0; sy = 0; }
-  else /* bottom */            { cw = sw; ch = Math.round(sh * fraction); sx = 0; sy = sh - ch; }
-  strip.width = cw;
-  strip.height = ch;
-  ctx.drawImage(srcCanvas, sx, sy, cw, ch, 0, 0, cw, ch);
-  return strip;
-}
-
-/** Enhance canvas contrast for white text on photo backgrounds */
-function enhanceForOCR(canvas) {
-  const ctx = canvas.getContext('2d');
-  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const d = imgData.data;
-  // Increase contrast: stretch histogram
-  for (let i = 0; i < d.length; i += 4) {
-    const gray = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
-    // Threshold: white text (>180) → black on white background for OCR
-    const v = gray > 180 ? 0 : 255;
-    d[i] = d[i+1] = d[i+2] = v;
-  }
-  ctx.putImageData(imgData, 0, 0);
-  return canvas;
-}
-
 /**
- * Fast OCR Scan for watermark timestamp.
- * Scaled down to max 800px for 4x faster processing.
- * Only 3 targeted strip checks (Top-0°, Top-270°, Bottom-0°).
+ * Scan ENTIRE image canvas to extract watermark timestamp (top-right, top-left, bottom, etc.)
  */
 async function ocrTimeFromBlob(blob) {
   try {
     const bitmap = await createImageBitmap(blob);
-    const maxDim = 800; // 800px is 3x-4x faster than 1200px and perfect for watermark text
-    let w = bitmap.width, h = bitmap.height;
+    const worker = await getOCRWorker();
+
+    const runOCR = async (canvas) => {
+      const { data } = await worker.recognize(canvas);
+      return extractTimeText(data.text);
+    };
+
+    const drawAndInvert = (canvas, ctx, w, h) => {
+      const imgData = ctx.getImageData(0, 0, w, h);
+      const d = imgData.data;
+      let brightPx = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] > 128) brightPx++;
+      }
+      if (brightPx < (d.length / 4) * 0.5) {
+        for (let i = 0; i < d.length; i += 4) {
+          d[i] = 255 - d[i];
+          d[i+1] = 255 - d[i+1];
+          d[i+2] = 255 - d[i+2];
+        }
+        ctx.putImageData(imgData, 0, 0);
+      }
+    };
+
+    const maxDim = 1200;
+    let w = bitmap.width;
+    let h = bitmap.height;
     if (w > maxDim || h > maxDim) {
-      if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
-      else       { w = Math.round((w * maxDim) / h); h = maxDim; }
+      if (w > h) {
+        h = Math.round((h * maxDim) / w);
+        w = maxDim;
+      } else {
+        w = Math.round((w * maxDim) / h);
+        h = maxDim;
+      }
     }
 
-    // Pass 1: Top 30% strip (0°) — Horizontal top-left / top-right watermarks
-    const c0 = createRotatedCanvas(bitmap, w, h, 0);
-    const topStrip0 = cropEdgeStrip(c0, 'top', 0.30);
-    let time = await ocrCanvasForTime(topStrip0);
+    // 1. Normal Orientation
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    drawAndInvert(canvas, ctx, w, h);
+
+    let time = await runOCR(canvas);
     if (time) return time;
 
-    // Pass 2: Top 30% strip (270°) — Vertical right-edge watermarks (e.g. P&G)
-    const c270 = createRotatedCanvas(bitmap, w, h, 270);
-    const topStrip270 = cropEdgeStrip(c270, 'top', 0.30);
-    time = await ocrCanvasForTime(topStrip270);
-    if (time) return time;
+    // 2. Rotated 90 degrees CW (Right vertical text)
+    const canvas90 = document.createElement('canvas');
+    canvas90.width = h; canvas90.height = w;
+    const ctx90 = canvas90.getContext('2d');
+    ctx90.translate(h / 2, w / 2);
+    ctx90.rotate(90 * Math.PI / 180);
+    ctx90.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height, -w / 2, -h / 2, w, h);
+    drawAndInvert(canvas90, ctx90, h, w);
 
-    // Pass 3: Bottom 25% strip (0°) — Bottom watermarks
-    const bottomStrip0 = cropEdgeStrip(c0, 'bottom', 0.25);
-    time = await ocrCanvasForTime(bottomStrip0);
+    time = await runOCR(canvas90);
     if (time) return time;
 
   } catch (e) {
@@ -508,15 +470,15 @@ export default function ReportView({ refreshKey }) {
   const projectRefs   = useRef({});
   const modalRef      = useRef();
 
-  /* Load Google Sheet Master Data */
+  /* ── Load Master Data ── */
   useEffect(() => {
     fetchMasterData()
-      .then(rows => setMasterData(rows || []))
+      .then(d => { if (Array.isArray(d)) setMasterData(d); })
       .catch(() => {});
   }, [refreshKey]);
 
   /* ═══════════════════════════════════════════════════════════════
-     ZIP UPLOAD — Ultra-fast non-blocking upload + Background OCR
+     ZIP UPLOAD — supports multiple files, accumulates sessions
      ═══════════════════════════════════════════════════════════════ */
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress,     setProgress]     = useState('');
@@ -529,60 +491,68 @@ export default function ReportView({ refreshKey }) {
     const newSessions = [];
 
     for (const file of files) {
-      setProgress(`Đang giải nén: ${file.name}...`);
+      setProgress(`Đang đọc: ${file.name}...`);
       try {
         const arrayBuffer = await file.arrayBuffer();
         const zip = await JSZip.loadAsync(arrayBuffer);
 
-        // ── Only take images from CI folder; skip CO and other folders ──
-        const allImagePaths = Object.keys(zip.files).filter(fp =>
-          !zip.files[fp].dir && /\.(jpg|jpeg|png|webp)$/i.test(fp)
-        );
-        const ciOnlyPaths = allImagePaths.filter(fp => {
-          const parts = fp.replace(/\\/g, '/').split('/');
-          return parts.some(p => /^CI$/i.test(p));
+        const imagePaths = Object.keys(zip.files).filter(fp => {
+          if (zip.files[fp].dir) return false;
+          if (!/\.(jpg|jpeg|png|webp)$/i.test(fp)) return false;
+          // ONLY pick images from CI or CHECKIN folders
+          return /\/(CI|CHECKIN)\//i.test(fp.replace(/\\/g, '/'));
         });
-        const imagePaths = ciOnlyPaths.length > 0 ? ciOnlyPaths : allImagePaths;
 
-        setProgress(`${file.name}: xử lý ${imagePaths.length} ảnh CI...`);
+        setProgress(`${file.name}: phân tích ${imagePaths.length} ảnh...`);
 
         const storeMap = {}; // key: "date||storeCode"
         let detectedProject = '';
 
-        // Extract blobs in parallel batches of 10 for super fast zip parsing
-        const BATCH_SIZE = 10;
-        for (let i = 0; i < imagePaths.length; i += BATCH_SIZE) {
-          const batchPaths = imagePaths.slice(i, i + BATCH_SIZE);
-          await Promise.all(batchPaths.map(async (fp) => {
-            const { datePart, projLabel, storeCode, storeName, empName, fileName } = parseUffPath(fp);
-            if (projLabel) detectedProject = projLabel;
+        for (let idx = 0; idx < imagePaths.length; idx++) {
+          if (idx % 20 === 0) setProgress(`${file.name}: ${idx+1}/${imagePaths.length} ảnh...`);
 
-            const blob = await zip.files[fp].async('blob');
-            const imgUrl = URL.createObjectURL(blob);
-            const finalProj = normalizeProjName(projLabel || detectedProject || file.name.split('_')[0]);
+          const fp = imagePaths[idx];
+          const { datePart, projLabel, storeCode, storeName, empName, fileName } = parseUffPath(fp);
 
-            const key = `${datePart}||${storeCode.toUpperCase()}`;
-            if (!storeMap[key]) {
-              storeMap[key] = {
-                key, date: datePart, storeCode, storeName, empName,
-                projLabel: finalProj,
-                ciPhotos: [],
-                ciBlobs:  [],
-                ciTime: null,
-              };
-            }
-            const rec = storeMap[key];
-            rec.ciPhotos.push(imgUrl);
-            rec.ciBlobs.push(blob);
+          if (projLabel) detectedProject = projLabel;
 
-            if (!rec.ciTime) {
-              const timeFromFn = timeFromFilename(fileName);
-              if (timeFromFn) rec.ciTime = timeFromFn;
-            }
-          }));
+          const blob   = await zip.files[fp].async('blob');
+          const imgUrl = URL.createObjectURL(blob);
+
+          const finalProj = normalizeProjName(projLabel || detectedProject || file.name.split('_')[0]);
+
+          const key = `${datePart}||${storeCode.toUpperCase()}`;
+          if (!storeMap[key]) {
+            storeMap[key] = {
+              key, date: datePart, storeCode, storeName, empName,
+              projLabel: finalProj,
+              ciPhotos: [],
+              ciBlobs:  [],
+              ciTime: null,
+            };
+          }
+          const rec = storeMap[key];
+          rec.ciPhotos.push(imgUrl);
+          rec.ciBlobs.push(blob);
+
+          // Pre-extract time from filename
+          if (!rec.ciTime) {
+            const timeFromFn = timeFromFilename(fileName);
+            if (timeFromFn) rec.ciTime = timeFromFn;
+          }
         }
 
+        // Auto OCR background scanning for stores without filename time
         const storeEntries = Object.values(storeMap);
+        for (let sIdx = 0; sIdx < storeEntries.length; sIdx++) {
+          const rec = storeEntries[sIdx];
+          if (!rec.ciTime && rec.ciBlobs.length > 0) {
+            setProgress(`${file.name}: Đang đọc giờ Check-In (${sIdx+1}/${storeEntries.length} store)...`);
+            const scannedTime = await ocrTimeFromBlob(rec.ciBlobs[0]);
+            if (scannedTime) rec.ciTime = scannedTime;
+          }
+        }
+
         const allDates = [...new Set(storeEntries.map(r => r.date))].sort();
         const projName = normalizeProjName(detectedProject || file.name.split('_')[0]);
         newSessions.push({
@@ -594,20 +564,6 @@ export default function ReportView({ refreshKey }) {
           dates:      allDates,
           storeMap,
         });
-
-        // ── Async Background OCR for stores missing check-in time ──
-        setTimeout(async () => {
-          const pendingStores = storeEntries.filter(rec => !rec.ciTime && rec.ciBlobs.length > 0);
-          for (let sIdx = 0; sIdx < pendingStores.length; sIdx++) {
-            const rec = pendingStores[sIdx];
-            const scannedTime = await ocrTimeFromBlob(rec.ciBlobs[0]);
-            if (scannedTime) {
-              rec.ciTime = scannedTime;
-              setSessions(prev => [...prev]); // Trigger UI update
-            }
-          }
-        }, 100);
-
 
       } catch (err) {
         alert(`Lỗi đọc "${file.name}": ${err.message}`);

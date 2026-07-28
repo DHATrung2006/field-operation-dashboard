@@ -7,9 +7,20 @@ const DAY_OF_WEEK = ['CN','T2','T3','T4','T5','T6','T7']; // 0=Sun
 
 function parseDate(str) {
   if (!str) return null;
-  const p = str.split('/');
-  if (p.length !== 3) return null;
-  return new Date(+p[2], +p[1]-1, +p[0]);
+  const s = String(str).trim();
+  let m;
+  // 1. DD/MM/YYYY or D/M/YYYY or DD-MM-YYYY
+  m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/);
+  if (m) return new Date(+m[3], +m[2] - 1, +m[1]);
+  // 2. YYYY-MM-DD or YYYY/MM/DD
+  m = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+  // 3. Vietnamese date string "20 tháng 7, 2026"
+  m = s.match(/(\d+)\s+(?:tháng|thg)?\s*(\d+)[,\s]+(\d{4})/i);
+  if (m) return new Date(+m[3], +m[2] - 1, +m[1]);
+  // 4. Fallback Date constructor
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? null : d;
 }
 
 const QC_CLR = s => {

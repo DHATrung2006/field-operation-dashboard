@@ -456,7 +456,16 @@ export default function ReportView({ refreshKey }) {
 
   /* Remove one session */
   const removeSession = useCallback((id) => {
-    setSessions(prev => prev.filter(s => s.id !== id));
+    setSessions(prev => {
+      const sess = prev.find(s => s.id === id);
+      if (sess) {
+        Object.values(sess.storeMap).forEach(rec => {
+          rec.ciPhotos?.forEach(url => URL.revokeObjectURL(url));
+          rec.coPhotos?.forEach(url => URL.revokeObjectURL(url));
+        });
+      }
+      return prev.filter(s => s.id !== id);
+    });
     setSelectedRow(null);
   }, []);
 
@@ -518,6 +527,13 @@ export default function ReportView({ refreshKey }) {
     const arr = [...s].sort();
     return arr.length ? arr : [todayISO()];
   }, [scheduleRows, sessions]);
+
+  // Auto select available date if selected date is not in list
+  useEffect(() => {
+    if (allScheduleDates.length > 0 && !allScheduleDates.includes(selDate)) {
+      setSelDate(allScheduleDates[allScheduleDates.length - 1]);
+    }
+  }, [allScheduleDates]);
 
   // Projects union on selDate
   const projectsOnDate = useMemo(() => {

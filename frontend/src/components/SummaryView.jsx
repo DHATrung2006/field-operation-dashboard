@@ -10,30 +10,20 @@ import html2canvas from 'html2canvas';
  */
 function parseVNDateISO(str) {
   if (!str) return null;
-  // 1. Format: "Thứ Sáu, 3 tháng 7, 2026"
-  let m = str.match(/(\d+)\s+tháng\s+(\d+),\s+(\d+)/i);
-  if (m) {
-    const year  = m[3];
-    const month = String(+m[2]).padStart(2, '0');
-    const day   = String(+m[1]).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
-  // 2. Format: "DD/MM/YYYY" or "D/M/YYYY"
-  m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (m) {
-    const year  = m[3];
-    const month = String(+m[2]).padStart(2, '0');
-    const day   = String(+m[1]).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
-  // 3. Format: "YYYY-MM-DD"
-  m = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (m) {
-    const year  = m[1];
-    const month = String(+m[2]).padStart(2, '0');
-    const day   = String(+m[3]).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
+  const s = String(str).trim();
+  let m;
+  // 1. Format: "Thứ Sáu, 3 tháng 7, 2026" or "20 thg 07 2026"
+  m = s.match(/(\d+)\s+(?:tháng|thg)?\s*(\d+)[,\s]+(\d{4})/i);
+  if (m) return `${m[3]}-${String(+m[2]).padStart(2, '0')}-${String(+m[1]).padStart(2, '0')}`;
+  // 2. Format: "DD/MM/YYYY" or "DD-MM-YYYY" or "DD.MM.YYYY"
+  m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/);
+  if (m) return `${m[3]}-${String(+m[2]).padStart(2, '0')}-${String(+m[1]).padStart(2, '0')}`;
+  // 3. Format: "YYYY-MM-DD" or "YYYY/MM/DD"
+  m = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
+  if (m) return `${m[1]}-${String(+m[2]).padStart(2, '0')}-${String(+m[3]).padStart(2, '0')}`;
+  // 4. Format: "YYYYMMDD"
+  m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
   return null;
 }
 

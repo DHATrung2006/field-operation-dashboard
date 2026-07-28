@@ -361,7 +361,7 @@ function calcStatus(ciTime, workingTime) {
   return ciMins > schedMins + 5 ? 'Đi trễ' : 'Đúng giờ';
 }
 
-/* ─── OCR via Tesseract.js (FULL IMAGE SCAN — any corner / position) ───────────────────── */
+/* ─── OCR via Tesseract.js — with ROTATION support for vertical watermarks ───────────── */
 let _tesseractWorker = null;
 
 async function getOCRWorker() {
@@ -372,55 +372,114 @@ async function getOCRWorker() {
   return _tesseractWorker;
 }
 
+/** Create a canvas from bitmap at given rotation angle (0, 90, 180, 270) */
+function createRotatedCanvas(bitmap, w, h, angleDeg) {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const isPortrait = angleDeg === 90 || angleDeg === 270;
+  canvas.width  = isPortrait ? h : w;
+  canvas.height = isPortrait ? w : h;
+  ctx.save();
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.rotate((angleDeg * Math.PI) / 180);
+  ctx.drawImage(bitmap, -w / 2, -h / 2, w, h);
+  ctx.restore();
+  return canvas;
+}
+
+/** Crop a strip from one edge of a canvas */
+function cropEdgeStrip(srcCanvas, edge, fraction) {
+  const sw = srcCanvas.width;
+  const sh = srcCanvas.height;
+  const strip = document.createElement('canvas');
+  const ctx = strip.getContext('2d');
+  let sx, sy, cw, ch;
+  if (edge === 'right')  { cw = Math.round(sw * fraction); ch = sh; sx = sw - cw; sy = 0; }
+  else if (edge === 'left')   { cw = Math.round(sw * fraction); ch = sh; sx = 0; sy = 0; }
+  else if (edge === 'top')    { cw = sw; ch = Math.round(sh * fraction); sx = 0; sy = 0; }
+  else /* bottom */            { cw = sw; ch = Math.round(sh * fraction); sx = 0; sy = sh - ch; }
+  strip.width = cw;
+  strip.height = ch;
+  ctx.drawImage(srcCanvas, sx, sy, cw, ch, 0, 0, cw, ch);
+  return strip;
+}
+
+/** Enhance canvas contrast for white text on photo backgrounds */
+function enhanceForOCR(canvas) {
+  const ctx = canvas.getContext('2d');
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = imgData.data;
+  // Increase contrast: stretch histogram
+  for (let i = 0; i < d.length; i += 4) {
+    const gray = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
+    // Threshold: white text (>180) → black on white background for OCR
+    const v = gray > 180 ? 0 : 255;
+    d[i] = d[i+1] = d[i+2] = v;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  return canvas;
+}
+
+/** Try OCR on a canvas and extract time */
+async function ocrCanvasForTime(canvas) {
+  try {
+    const worker = await getOCRWorker();
+    const { data } = await worker.recognize(canvas);
+    return extractTimeText(data.text);
+  } catch { return null; }
+}
+
 /**
- * Scan ENTIRE image canvas to extract watermark timestamp (top-right, top-left, bottom, etc.)
+ * Scan image for watermark timestamp.
+ * Strategy:
+ *   1. Try original (0°) — handles horizontal text (top-left, bottom, etc.)
+ *   2. Try 90° CCW (270°) — handles right-edge vertical text (most common rotation)
+ *   3. Try 90° CW (90°)  — handles left-edge vertical text
+ * For each rotation, try edge strips first (faster), then full canvas.
  */
 async function ocrTimeFromBlob(blob) {
   try {
     const bitmap = await createImageBitmap(blob);
-    const canvas = document.createElement('canvas');
-    
-    // Scale image down to max 1200px for high-speed full-canvas OCR
     const maxDim = 1200;
-    let w = bitmap.width;
-    let h = bitmap.height;
+    let w = bitmap.width, h = bitmap.height;
     if (w > maxDim || h > maxDim) {
-      if (w > h) {
-        h = Math.round((h * maxDim) / w);
-        w = maxDim;
-      } else {
-        w = Math.round((w * maxDim) / h);
-        h = maxDim;
-      }
-    }
-    
-    canvas.width  = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(bitmap, 0, 0, w, h);
-
-    const imgData = ctx.getImageData(0, 0, w, h);
-    const d = imgData.data;
-    let brightPx = 0;
-    for (let i = 0; i < d.length; i += 4) {
-      if (d[i] > 128) brightPx++;
-    }
-    const isMostlyDark = brightPx < (d.length / 4) * 0.5;
-    if (isMostlyDark) {
-      for (let i = 0; i < d.length; i += 4) {
-        d[i]   = 255 - d[i];
-        d[i+1] = 255 - d[i+1];
-        d[i+2] = 255 - d[i+2];
-      }
-      ctx.putImageData(imgData, 0, 0);
+      if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
+      else       { w = Math.round((w * maxDim) / h); h = maxDim; }
     }
 
-    const worker = await getOCRWorker();
-    const { data } = await worker.recognize(canvas);
-    const text = data.text;
+    // === PASS 1: Original orientation (0°) ===
+    const c0 = createRotatedCanvas(bitmap, w, h, 0);
 
-    const extracted = extractTimeText(text);
-    if (extracted) return extracted;
+    // 1a. Try top-left strip (20% height) — most common for horizontal watermarks
+    const topStrip = cropEdgeStrip(c0, 'top', 0.25);
+    let time = await ocrCanvasForTime(topStrip);
+    if (time) return time;
+
+    // 1b. Try bottom strip
+    const bottomStrip = cropEdgeStrip(c0, 'bottom', 0.20);
+    time = await ocrCanvasForTime(bottomStrip);
+    if (time) return time;
+
+    // === PASS 2: Rotate 90° CCW (270°) — for right-edge vertical text ===
+    const c270 = createRotatedCanvas(bitmap, w, h, 270);
+    const topStrip270 = cropEdgeStrip(c270, 'top', 0.25);
+    time = await ocrCanvasForTime(topStrip270);
+    if (time) return time;
+
+    // Full canvas at 270° as fallback
+    time = await ocrCanvasForTime(c270);
+    if (time) return time;
+
+    // === PASS 3: Rotate 90° CW (90°) — for left-edge vertical text ===
+    const c90 = createRotatedCanvas(bitmap, w, h, 90);
+    const topStrip90 = cropEdgeStrip(c90, 'top', 0.25);
+    time = await ocrCanvasForTime(topStrip90);
+    if (time) return time;
+
+    // === PASS 4: Full original as last resort ===
+    time = await ocrCanvasForTime(c0);
+    if (time) return time;
+
   } catch (e) {
     console.warn('OCR failed:', e.message);
   }
@@ -480,11 +539,18 @@ export default function ReportView({ refreshKey }) {
         const arrayBuffer = await file.arrayBuffer();
         const zip = await JSZip.loadAsync(arrayBuffer);
 
-        const imagePaths = Object.keys(zip.files).filter(fp =>
+        // ── Only take images from CI folder; skip CO and other folders ──
+        const allImagePaths = Object.keys(zip.files).filter(fp =>
           !zip.files[fp].dir && /\.(jpg|jpeg|png|webp)$/i.test(fp)
         );
+        const ciOnlyPaths = allImagePaths.filter(fp => {
+          const parts = fp.replace(/\\/g, '/').split('/');
+          return parts.some(p => /^CI$/i.test(p));
+        });
+        // Use CI-only if available, otherwise fall back to all images
+        const imagePaths = ciOnlyPaths.length > 0 ? ciOnlyPaths : allImagePaths;
 
-        setProgress(`${file.name}: phân tích ${imagePaths.length} ảnh...`);
+        setProgress(`${file.name}: phân tích ${imagePaths.length} ảnh CI...`);
 
         const storeMap = {}; // key: "date||storeCode"
         let detectedProject = '';

@@ -595,6 +595,20 @@ export default function ReportView({ refreshKey }) {
           storeMap,
         });
 
+        // ── Async Background OCR for stores missing check-in time ──
+        setTimeout(async () => {
+          const pendingStores = storeEntries.filter(rec => !rec.ciTime && rec.ciBlobs.length > 0);
+          for (let sIdx = 0; sIdx < pendingStores.length; sIdx++) {
+            const rec = pendingStores[sIdx];
+            const scannedTime = await ocrTimeFromBlob(rec.ciBlobs[0]);
+            if (scannedTime) {
+              rec.ciTime = scannedTime;
+              setSessions(prev => [...prev]); // Trigger UI update
+            }
+          }
+        }, 100);
+
+
       } catch (err) {
         alert(`Lỗi đọc "${file.name}": ${err.message}`);
       }

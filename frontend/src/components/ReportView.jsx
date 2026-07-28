@@ -100,13 +100,18 @@ function detectProjFolder(part) {
   return normalizeProjName(raw);
 }
 
-/** Parse UFF file path into Date, Project, Store (Supermarket), and Employee */
+/** 
+ * Parse UFF zip path precisely based on UFF hierarchy:
+ * Project_DateRange / Date / StoreCode_StoreName / EmpCode_EmpName / CI|CO / filename
+ */
 function parseUffPath(filePath) {
-  const parts = filePath.split(/[/\\]/);
+  const cleanPath = filePath.replace(/\\/g, '/');
+  const parts = cleanPath.split('/').filter(Boolean);
   const fileName = parts[parts.length - 1];
 
   let datePart  = '';
   let projLabel = '';
+  let dateIdx   = -1;
 
   // 1. Scan folders for project & date
   for (let i = 0; i < parts.length - 1; i++) {
@@ -116,8 +121,10 @@ function parseUffPath(filePath) {
       if (pj) projLabel = pj;
     }
     const dParsed = parseVNDate(p);
-    if (dParsed && !datePart) datePart = dParsed;
-
+    if (dParsed && !datePart) {
+      datePart = dParsed;
+      dateIdx  = i;
+    }
     const rangeMatch = p.match(/^[A-Za-z&]+_(\d{8})/);
     if (rangeMatch && !datePart) {
       const ds = rangeMatch[1];
@@ -131,27 +138,47 @@ function parseUffPath(filePath) {
   }
   if (!datePart) datePart = todayISO();
 
-  // 2. Extract non-date, non-project folders
-  const dirParts = parts.slice(0, parts.length - 1).filter(p =>
-    !/^\d{8}$/.test(p) && !detectProjFolder(p) && !parseVNDate(p) && !/^[A-Za-z&]+_\d{8}/.test(p)
-  );
-
+  // 2. Identify Store folder vs Employee folder using dateIdx & folder hierarchy
   let storePart = '';
   let empPart   = '';
 
-  if (dirParts.length >= 2) {
-    // Innermost folder wrapping image is ALWAYS Store folder!
-    storePart = dirParts[dirParts.length - 1];
-    // Outer folder above Store is Employee folder!
-    empPart   = dirParts[dirParts.length - 2];
-  } else if (dirParts.length === 1) {
-    const p = dirParts[0];
-    // If it looks like employee ID (e.g. NV001_...) without store keywords
-    if (/^(NV|BA|PG|STAFF)\d+/i.test(p) && !/coop|bhx|win|bigc|go!|lotte|aeon|mart|pharmacity|siêu thị|st/i.test(p)) {
-      empPart = p;
-    } else {
-      storePart = p;
+  if (dateIdx >= 0 && dateIdx + 1 < parts.length - 1) {
+    const afterDate = parts[dateIdx + 1];
+    if (!/^(CI|CO|CHECKIN|CHECKOUT)$/i.test(afterDate)) {
+      storePart = afterDate;
+      if (dateIdx + 2 < parts.length - 1) {
+        const next = parts[dateIdx + 2];
+        if (!/^(CI|CO|CHECKIN|CHECKOUT)$/i.test(next)) empPart = next;
+      }
     }
+  }
+
+  // Fallback directory search if dateIdx wasn't found
+  if (!storePart) {
+    const remaining = parts.slice(0, parts.length - 1).filter(p =>
+      !/^\d{8}$/.test(p) && !detectProjFolder(p) && !parseVNDate(p) &&
+      !/^[A-Za-z&]+_\d{8}/.test(p) && !/\.zip$/i.test(p) && !/^(CI|CO)$/i.test(p)
+    );
+
+    if (remaining.length >= 2) {
+      const p0IsEmp = /^(PGBHX|PG|BA|NV|SUP|STAFF)\d+/i.test(remaining[0]);
+      if (p0IsEmp) {
+        empPart   = remaining[0];
+        storePart = remaining[1];
+      } else {
+        storePart = remaining[0];
+        empPart   = remaining[1];
+      }
+    } else if (remaining.length === 1) {
+      storePart = remaining[0];
+    }
+  }
+
+  // Swap check: if storePart was accidentally assigned the Employee ID folder (e.g. PGBHX020_...)
+  if (storePart && /^(PGBHX|PG|BA|NV|SUP|STAFF)\d+_/i.test(storePart) && empPart && !/^(PGBHX|PG|BA|NV|SUP|STAFF)\d+_/i.test(empPart)) {
+    const temp = storePart;
+    storePart = empPart;
+    empPart = temp;
   }
 
   // Parse storeCode & storeName
@@ -168,7 +195,6 @@ function parseUffPath(filePath) {
       storeCode = storePart.slice(0, idx).trim();
       storeName = storePart.slice(idx + 1).trim();
     } else {
-      // Store part like "K08620 Coopmart Go Vap"
       const codeMatch = storePart.match(/^([A-Za-z0-9]{3,8})\s+(.*)$/);
       if (codeMatch) {
         storeCode = codeMatch[1];
@@ -189,6 +215,10 @@ function parseUffPath(filePath) {
     empName = empPart.slice(idx + 1).replace(/_/g, ' ').trim();
   }
 
+  // Detect CI vs CO
+  const fullPathLow = cleanPath.toLowerCase();
+  const isCO = /\/co\//.test(fullPathLow) || /[_\-]co[_\-\.]/.test(fileName.toLowerCase());
+
   return {
     datePart,
     projLabel: normalizeProjName(projLabel),
@@ -197,40 +227,36 @@ function parseUffPath(filePath) {
     storeName: storeName || storePart || 'Siêu Thị',
     empCode,
     empName,
+    isCO,
     fileName,
   };
 }
 
 /** Robust store matcher: code, numeric, unaccented name, word overlap */
 function isStoreMatch(sched, zip) {
-  // 1. Projects must align (if both known)
   const pSched = normalizeProjName(sched.project);
   const pZip   = normalizeProjName(zip.projLabel);
   if (pSched && pZip && pSched !== pZip && pSched !== 'Khác' && pZip !== 'Khác') {
     return false;
   }
 
-  // 2. Exact or Normalized Code Match (e.g. K08620 vs K08620 or K-08620)
   const codeS = cleanStoreStr(sched.storeCode).replace(/\s/g, '');
   const codeZ = cleanStoreStr(zip.storeCode).replace(/\s/g, '');
   if (codeS && codeZ && (codeS === codeZ || codeS.includes(codeZ) || codeZ.includes(codeS))) {
     return true;
   }
 
-  // 3. Numeric Code Match (e.g. 08620 or 8620 appearing in storeCode or storeName of both)
   const numS = extractDigits(sched.storeCode + ' ' + sched.storeName);
   const numZ = extractDigits(zip.storeCode + ' ' + zip.storeName);
   if (numS && numZ && numS.length >= 3 && numZ.length >= 3 && (numS === numZ || numS.includes(numZ) || numZ.includes(numS))) {
     return true;
   }
 
-  // 4. Clean Unaccented Name Inclusion Match (e.g. "coopmart go vap" vs "co.opmart gò vấp")
   const nameS = cleanStoreStr(sched.storeName);
   const nameZ = cleanStoreStr(zip.storeName);
   if (nameS && nameZ) {
     if (nameS.includes(nameZ) || nameZ.includes(nameS)) return true;
 
-    // 5. Word Overlap Match (if > 50% of words in zip name appear in schedule name)
     const wordsZ = nameZ.split(' ').filter(w => w.length > 2);
     if (wordsZ.length >= 2) {
       const matchCount = wordsZ.filter(w => nameS.includes(w)).length;
@@ -368,12 +394,9 @@ export default function ReportView({ refreshKey }) {
           if (idx % 20 === 0) setProgress(`${file.name}: ${idx+1}/${imagePaths.length} ảnh...`);
 
           const fp = imagePaths[idx];
-          const { datePart, projLabel, storeCode, storeName, empName, fileName } = parseUffPath(fp);
+          const { datePart, projLabel, storeCode, storeName, empName, isCO, fileName } = parseUffPath(fp);
 
           if (projLabel) detectedProject = projLabel;
-
-          const fnLow = fileName.toLowerCase();
-          const isCO  = /^co[_\-]|[_\-]co[_\-\.]/.test(fnLow);
 
           const blob   = await zip.files[fp].async('blob');
           const imgUrl = URL.createObjectURL(blob);
@@ -761,7 +784,7 @@ export default function ReportView({ refreshKey }) {
 
           <p className="text-xs text-slate-400 leading-relaxed">
             Mỗi dự án xuất <strong className="text-teal-200">một file Zip riêng</strong> từ web UFF → upload từng file. Hệ thống tự tích lũy dữ liệu.
-            <br/>Cấu trúc: <code className="text-teal-300 text-[10px]">PnG_20260720_20260726 / 20260720 / NV001_Nguyen Van A / BHX001_BHX Dang Van Bi / CI_xxx.jpg</code>
+            <br/>Cấu trúc: <code className="text-teal-300 text-[10px]">PnG_20260728_20260728 / 20260728 / BHX001_BHX Dang Van Bi / PGBHX020_Nguyen... / CI / xxx.jpg</code>
           </p>
 
           {/* Drop zone */}

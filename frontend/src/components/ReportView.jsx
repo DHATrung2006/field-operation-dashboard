@@ -16,10 +16,9 @@ const STATUS_STYLE = {
 
 // UFF zip folder prefix → full project name
 const PREFIX_MAP = {
-  PNG:'P&G', PG:'P&G', 'P&G':'P&G',
+  PNG:'P&G', PG:'P&G', 'P&G':'P&G', BHX:'P&G', 'BÁCH HÓA XANH':'P&G', 'BACH HOA XANH':'P&G',
   MAG:'MAGGI', MGI:'MAGGI', MAGGI:'MAGGI',
-  NCF:'NESTCAFE', NSF:'NESTCAFE', NSC:'NESTCAFE', NES:'NESTCAFE',
-  NESTCAFE:'NESTCAFE', NESCAFE:'NESTCAFE',
+  NCF:'NESTCAFE', NSF:'NESTCAFE', NSC:'NESTCAFE', NES:'NESTCAFE', NESTCAFE:'NESTCAFE', NESCAFE:'NESTCAFE',
   VDA:'VINDA', VND:'VINDA', VIN:'VINDA', VINDA:'VINDA',
   STM:'STMB', STMB:'STMB',
   UNI:'Unilever', UL:'Unilever', UNILEVER:'Unilever',
@@ -67,7 +66,7 @@ function normalizeProjName(p) {
     if (raw === k || raw.startsWith(k)) return v;
   }
   if (/NEST|NCF|NSF|NSC|NES/.test(raw)) return 'NESTCAFE';
-  if (/PNG|P&G|PG/.test(raw)) return 'P&G';
+  if (/PNG|P&G|PG|BHX/.test(raw)) return 'P&G';
   if (/MAGGI|MAG|MGI/.test(raw)) return 'MAGGI';
   if (/VINDA|VDA|VND|VIN/.test(raw)) return 'VINDA';
   if (/STMB|STM/.test(raw)) return 'STMB';
@@ -92,7 +91,7 @@ function parseVNDate(str) {
   return null;
 }
 
-/** Detect UFF project folder: LETTERS_YYYYMMDD[_YYYYMMDD] */
+/** Detect UFF project folder */
 function detectProjFolder(part) {
   const m = part.match(/^([A-Za-z&]+)_\d{8}(_\d{8})?$/);
   if (!m) return '';
@@ -100,9 +99,36 @@ function detectProjFolder(part) {
   return normalizeProjName(raw);
 }
 
+/** Extract time pattern (HH:MM or HH:MM:SS) from text */
+function extractTimeText(text) {
+  if (!text) return null;
+  const m = text.match(/\b([01]?\d|2[0-3])[:\.h\s]([0-5]\d)(?:[:\.h\s]([0-5]\d))?\b/);
+  if (m) {
+    const h = String(+m[1]).padStart(2, '0');
+    const min = String(+m[2]).padStart(2, '0');
+    return `${h}:${min}`;
+  }
+  return null;
+}
+
+/** Extract time from filename patterns like CI_20260728_081523.jpg or CI_0815.jpg */
+function timeFromFilename(fileName) {
+  if (!fileName) return null;
+  // 6 digits HHMMSS (081523)
+  let m = fileName.match(/[_\-](\d{2})(\d{2})\d{2}[_\-.]/) || fileName.match(/(\d{2})(\d{2})\d{2}\./);
+  if (m && +m[1] <= 23 && +m[2] <= 59) return `${m[1]}:${m[2]}`;
+  // HH:MM or HH-MM or HHhMM
+  m = fileName.match(/[_\-](\d{2})[:\-h](\d{2})/);
+  if (m && +m[1] <= 23 && +m[2] <= 59) return `${m[1]}:${m[2]}`;
+  // 4 digits HHMM
+  m = fileName.match(/[_\-](\d{2})(\d{2})[_\-\.]/);
+  if (m && +m[1] <= 23 && +m[2] <= 59) return `${m[1]}:${m[2]}`;
+  return null;
+}
+
 /** 
- * Parse UFF zip path precisely based on UFF hierarchy:
- * Project_DateRange / Date / StoreCode_StoreName / EmpCode_EmpName / CI|CO / filename
+ * Parse UFF zip path precisely:
+ * Project_DateRange / Date / StoreCode_StoreName / EmpCode_EmpName / CI / filename
  */
 function parseUffPath(filePath) {
   const cleanPath = filePath.replace(/\\/g, '/');
@@ -138,7 +164,7 @@ function parseUffPath(filePath) {
   }
   if (!datePart) datePart = todayISO();
 
-  // 2. Identify Store folder vs Employee folder using dateIdx & folder hierarchy
+  // 2. Identify Store folder vs Employee folder using dateIdx & hierarchy
   let storePart = '';
   let empPart   = '';
 
@@ -153,7 +179,6 @@ function parseUffPath(filePath) {
     }
   }
 
-  // Fallback directory search if dateIdx wasn't found
   if (!storePart) {
     const remaining = parts.slice(0, parts.length - 1).filter(p =>
       !/^\d{8}$/.test(p) && !detectProjFolder(p) && !parseVNDate(p) &&
@@ -174,7 +199,7 @@ function parseUffPath(filePath) {
     }
   }
 
-  // Swap check: if storePart was accidentally assigned the Employee ID folder (e.g. PGBHX020_...)
+  // Swap check: if storePart was assigned Employee ID folder (e.g. PGBHX020_...)
   if (storePart && /^(PGBHX|PG|BA|NV|SUP|STAFF)\d+_/i.test(storePart) && empPart && !/^(PGBHX|PG|BA|NV|SUP|STAFF)\d+_/i.test(empPart)) {
     const temp = storePart;
     storePart = empPart;
@@ -215,10 +240,6 @@ function parseUffPath(filePath) {
     empName = empPart.slice(idx + 1).replace(/_/g, ' ').trim();
   }
 
-  // Detect CI vs CO
-  const fullPathLow = cleanPath.toLowerCase();
-  const isCO = /\/co\//.test(fullPathLow) || /[_\-]co[_\-\.]/.test(fileName.toLowerCase());
-
   return {
     datePart,
     projLabel: normalizeProjName(projLabel),
@@ -227,31 +248,40 @@ function parseUffPath(filePath) {
     storeName: storeName || storePart || 'Siêu Thị',
     empCode,
     empName,
-    isCO,
     fileName,
   };
 }
 
-/** Robust store matcher: code, numeric, unaccented name, word overlap */
+/** Robust store matcher */
 function isStoreMatch(sched, zip) {
   const pSched = normalizeProjName(sched.project);
   const pZip   = normalizeProjName(zip.projLabel);
-  if (pSched && pZip && pSched !== pZip && pSched !== 'Khác' && pZip !== 'Khác') {
-    return false;
-  }
 
   const codeS = cleanStoreStr(sched.storeCode).replace(/\s/g, '');
   const codeZ = cleanStoreStr(zip.storeCode).replace(/\s/g, '');
-  if (codeS && codeZ && (codeS === codeZ || codeS.includes(codeZ) || codeZ.includes(codeS))) {
-    return true;
+
+  const exactCodeMatch = codeS && codeZ && codeS.length >= 3 && (codeS === codeZ || codeS.includes(codeZ) || codeZ.includes(codeS));
+
+  // If store code matches, it's a match regardless of project label variations!
+  if (exactCodeMatch) return true;
+
+  // Check project alignment if both specified
+  if (pSched && pZip && pSched !== pZip && pSched !== 'Khác' && pZip !== 'Khác') {
+    const cleanPS = cleanStoreStr(pSched);
+    const cleanPZ = cleanStoreStr(pZip);
+    if (!cleanPS.includes(cleanPZ) && !cleanPZ.includes(cleanPS)) {
+      return false;
+    }
   }
 
+  // Numeric Code Match
   const numS = extractDigits(sched.storeCode + ' ' + sched.storeName);
   const numZ = extractDigits(zip.storeCode + ' ' + zip.storeName);
   if (numS && numZ && numS.length >= 3 && numZ.length >= 3 && (numS === numZ || numS.includes(numZ) || numZ.includes(numS))) {
     return true;
   }
 
+  // Clean Unaccented Name Inclusion Match
   const nameS = cleanStoreStr(sched.storeName);
   const nameZ = cleanStoreStr(zip.storeName);
   if (nameS && nameZ) {
@@ -279,7 +309,7 @@ function calcStatus(ciTime, workingTime) {
   return ciMins > schedMins + 5 ? 'Đi trễ' : 'Đúng giờ';
 }
 
-/* ─── OCR via Tesseract.js (lazy-loaded) ───────────────────── */
+/* ─── OCR via Tesseract.js (FULL IMAGE SCAN — any corner / position) ───────────────────── */
 let _tesseractWorker = null;
 
 async function getOCRWorker() {
@@ -290,17 +320,34 @@ async function getOCRWorker() {
   return _tesseractWorker;
 }
 
+/**
+ * Scan ENTIRE image canvas to extract watermark timestamp (top-right, top-left, bottom, etc.)
+ */
 async function ocrTimeFromBlob(blob) {
   try {
     const bitmap = await createImageBitmap(blob);
     const canvas = document.createElement('canvas');
-    const cropH = Math.max(60, Math.floor(bitmap.height * 0.30));
-    canvas.width  = bitmap.width;
-    canvas.height = cropH;
+    
+    // Scale image down to max 1200px for high-speed full-canvas OCR
+    const maxDim = 1200;
+    let w = bitmap.width;
+    let h = bitmap.height;
+    if (w > maxDim || h > maxDim) {
+      if (w > h) {
+        h = Math.round((h * maxDim) / w);
+        w = maxDim;
+      } else {
+        w = Math.round((w * maxDim) / h);
+        h = maxDim;
+      }
+    }
+    
+    canvas.width  = w;
+    canvas.height = h;
     const ctx = canvas.getContext('2d');
-    ctx.drawImage(bitmap, 0, bitmap.height - cropH, bitmap.width, cropH, 0, 0, bitmap.width, cropH);
+    ctx.drawImage(bitmap, 0, 0, w, h);
 
-    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const imgData = ctx.getImageData(0, 0, w, h);
     const d = imgData.data;
     let brightPx = 0;
     for (let i = 0; i < d.length; i += 4) {
@@ -320,8 +367,8 @@ async function ocrTimeFromBlob(blob) {
     const { data } = await worker.recognize(canvas);
     const text = data.text;
 
-    const m = text.match(/\b([01]?\d|2[0-3])[:\.h]([0-5]\d)(?:[:\.][0-5]\d)?\b/);
-    if (m) return `${pad(+m[1])}:${pad(+m[2])}`;
+    const extracted = extractTimeText(text);
+    if (extracted) return extracted;
   } catch (e) {
     console.warn('OCR failed:', e.message);
   }
@@ -394,7 +441,7 @@ export default function ReportView({ refreshKey }) {
           if (idx % 20 === 0) setProgress(`${file.name}: ${idx+1}/${imagePaths.length} ảnh...`);
 
           const fp = imagePaths[idx];
-          const { datePart, projLabel, storeCode, storeName, empName, isCO, fileName } = parseUffPath(fp);
+          const { datePart, projLabel, storeCode, storeName, empName, fileName } = parseUffPath(fp);
 
           if (projLabel) detectedProject = projLabel;
 
@@ -408,28 +455,40 @@ export default function ReportView({ refreshKey }) {
             storeMap[key] = {
               key, date: datePart, storeCode, storeName, empName,
               projLabel: finalProj,
-              ciPhotos: [], coPhotos: [],
-              ciBlobs:  [], coBlobs:  [],
-              ciTime: null, coTime: null,
+              ciPhotos: [],
+              ciBlobs:  [],
+              ciTime: null,
             };
           }
           const rec = storeMap[key];
-          if (isCO) {
-            rec.coPhotos.push(imgUrl);
-            rec.coBlobs.push(blob);
-          } else {
-            rec.ciPhotos.push(imgUrl);
-            rec.ciBlobs.push(blob);
+          rec.ciPhotos.push(imgUrl);
+          rec.ciBlobs.push(blob);
+
+          // Pre-extract time from filename
+          if (!rec.ciTime) {
+            const timeFromFn = timeFromFilename(fileName);
+            if (timeFromFn) rec.ciTime = timeFromFn;
           }
         }
 
-        const allDates = [...new Set(Object.values(storeMap).map(r => r.date))].sort();
+        // Auto OCR background scanning for stores without filename time
+        const storeEntries = Object.values(storeMap);
+        for (let sIdx = 0; sIdx < storeEntries.length; sIdx++) {
+          const rec = storeEntries[sIdx];
+          if (!rec.ciTime && rec.ciBlobs.length > 0) {
+            setProgress(`${file.name}: Đang đọc giờ Check-In (${sIdx+1}/${storeEntries.length} store)...`);
+            const scannedTime = await ocrTimeFromBlob(rec.ciBlobs[0]);
+            if (scannedTime) rec.ciTime = scannedTime;
+          }
+        }
+
+        const allDates = [...new Set(storeEntries.map(r => r.date))].sort();
         const projName = normalizeProjName(detectedProject || file.name.split('_')[0]);
         newSessions.push({
           id:         `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
           fileName:   file.name,
           project:    projName,
-          storeCount: Object.keys(storeMap).length,
+          storeCount: storeEntries.length,
           imageCount: imagePaths.length,
           dates:      allDates,
           storeMap,
@@ -461,7 +520,6 @@ export default function ReportView({ refreshKey }) {
       if (sess) {
         Object.values(sess.storeMap).forEach(rec => {
           rec.ciPhotos?.forEach(url => URL.revokeObjectURL(url));
-          rec.coPhotos?.forEach(url => URL.revokeObjectURL(url));
         });
       }
       return prev.filter(s => s.id !== id);
@@ -474,28 +532,26 @@ export default function ReportView({ refreshKey }) {
     const m = new Map();
     for (const sess of sessions) {
       for (const [k, v] of Object.entries(sess.storeMap)) {
-        if (!m.has(k)) m.set(k, { ...v, ciPhotos:[...v.ciPhotos], coPhotos:[...v.coPhotos], ciBlobs:[...v.ciBlobs], coBlobs:[...v.coBlobs] });
+        if (!m.has(k)) m.set(k, { ...v, ciPhotos:[...v.ciPhotos], ciBlobs:[...v.ciBlobs] });
         else {
           const ex = m.get(k);
           ex.ciPhotos = [...ex.ciPhotos, ...v.ciPhotos];
-          ex.coPhotos = [...ex.coPhotos, ...v.coPhotos];
           ex.ciBlobs  = [...ex.ciBlobs,  ...v.ciBlobs];
-          ex.coBlobs  = [...ex.coBlobs,  ...v.coBlobs];
+          if (!ex.ciTime && v.ciTime) ex.ciTime = v.ciTime;
         }
       }
     }
     return m;
   }, [sessions]);
 
-  /* OCR trigger */
-  const triggerOCR = useCallback(async (rowId, ciBlobs, coBlobs) => {
+  /* OCR trigger manually if needed */
+  const triggerOCR = useCallback(async (rowId, ciBlobs) => {
     setOcrState(prev => ({ ...prev, [rowId]: 'scanning' }));
     try {
       const ciTime = ciBlobs.length ? await ocrTimeFromBlob(ciBlobs[0]) : null;
-      const coTime = coBlobs.length ? await ocrTimeFromBlob(coBlobs[0]) : null;
-      setOcrState(prev => ({ ...prev, [rowId]: { ciTime: ciTime || '—', coTime: coTime || '—' } }));
+      setOcrState(prev => ({ ...prev, [rowId]: { ciTime: ciTime || '—' } }));
     } catch {
-      setOcrState(prev => ({ ...prev, [rowId]: { ciTime: '—', coTime: '—' } }));
+      setOcrState(prev => ({ ...prev, [rowId]: { ciTime: '—' } }));
     }
   }, []);
 
@@ -575,10 +631,9 @@ export default function ReportView({ refreshKey }) {
 
       const rowId  = `sched_${sched.isoDate}_${sched.storeCode}_${i}`;
       const ocr    = ocrState[rowId];
-      const ciTime = (ocr && ocr !== 'scanning') ? ocr.ciTime : (zip ? '—' : null);
-      const coTime = (ocr && ocr !== 'scanning') ? ocr.coTime : (zip ? '—' : null);
+      const ciTime = (ocr && ocr !== 'scanning') ? ocr.ciTime : (zip?.ciTime || (zip ? '—' : null));
       const status = zip
-        ? (ocr && ocr !== 'scanning' ? calcStatus(ocr.ciTime, sched.workingTime) : 'Đúng giờ')
+        ? calcStatus(ciTime, sched.workingTime)
         : 'Chưa CI';
 
       mergedRows.push({
@@ -593,14 +648,10 @@ export default function ReportView({ refreshKey }) {
         sup:         sched.sup || '—',
         region:      sched.region || '—',
         ciTime:      ciTime || '—',
-        coTime:      coTime || '—',
         status,
         ciPhotos:    zip?.ciPhotos || [],
-        coPhotos:    zip?.coPhotos || [],
         ciPhoto:     zip?.ciPhotos?.[0] || null,
-        coPhoto:     zip?.coPhotos?.[0] || null,
         ciBlobs:     zip?.ciBlobs || [],
-        coBlobs:     zip?.coBlobs || [],
         hasZip:      !!zip,
         ocrDone:     !!(ocr && ocr !== 'scanning'),
         ocrScanning: ocr === 'scanning',
@@ -611,12 +662,11 @@ export default function ReportView({ refreshKey }) {
     zipForDate.forEach((zip, i) => {
       if (matchedZipKeys.has(zip.key)) return;
 
-      const normP = normalizeProjName(zip.projLabel);
-      const rowId = `zip_${zip.date}_${zip.storeCode}_${i}`;
-      const ocr   = ocrState[rowId];
-      const ciTime = (ocr && ocr !== 'scanning') ? ocr.ciTime : '—';
-      const coTime = (ocr && ocr !== 'scanning') ? ocr.coTime : '—';
-      const status = ocr && ocr !== 'scanning' ? calcStatus(ocr.ciTime, null) : 'Đúng giờ';
+      const normP  = normalizeProjName(zip.projLabel);
+      const rowId  = `zip_${zip.date}_${zip.storeCode}_${i}`;
+      const ocr    = ocrState[rowId];
+      const ciTime = (ocr && ocr !== 'scanning') ? ocr.ciTime : (zip.ciTime || '—');
+      const status = calcStatus(ciTime, null);
 
       mergedRows.push({
         id:          rowId,
@@ -630,14 +680,10 @@ export default function ReportView({ refreshKey }) {
         sup:         '—',
         region:      '—',
         ciTime,
-        coTime,
         status,
         ciPhotos:    zip.ciPhotos || [],
-        coPhotos:    zip.coPhotos || [],
         ciPhoto:     zip.ciPhotos?.[0] || null,
-        coPhoto:     zip.coPhotos?.[0] || null,
         ciBlobs:     zip.ciBlobs || [],
-        coBlobs:     zip.coBlobs || [],
         hasZip:      true,
         ocrDone:     !!(ocr && ocr !== 'scanning'),
         ocrScanning: ocr === 'scanning',
@@ -690,8 +736,8 @@ export default function ReportView({ refreshKey }) {
   /* ── Handle row click → auto-trigger OCR ── */
   const handleRowClick = useCallback((row) => {
     setSelectedRow(prev => prev?.id === row.id ? null : row);
-    if (row.hasZip && !row.ocrDone && !row.ocrScanning) {
-      triggerOCR(row.id, row.ciBlobs, row.coBlobs);
+    if (row.hasZip && (!row.ciTime || row.ciTime === '—') && !row.ocrScanning) {
+      triggerOCR(row.id, row.ciBlobs);
     }
   }, [triggerOCR]);
 
@@ -763,7 +809,7 @@ export default function ReportView({ refreshKey }) {
             Báo cáo UFF — Đối Soát Check-In BA
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Upload file Zip ảnh CI/CO theo từng dự án → hệ thống đọc giờ từ chữ trên ảnh (OCR) → đối soát với Lịch Master.
+            Upload file Zip ảnh CI theo từng dự án → hệ thống đọc giờ từ chữ trên ảnh (OCR) → đối soát với Lịch Master.
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -823,7 +869,7 @@ export default function ReportView({ refreshKey }) {
               <div className="text-center py-1">
                 <i className="fa-solid fa-cloud-arrow-up text-3xl text-teal-400 mb-2" />
                 <div className="text-xs font-bold text-slate-200">Nhấn để chọn hoặc kéo thả file Zip vào đây</div>
-                <div className="text-[10px] text-slate-500 mt-0.5">Có thể chọn nhiều file cùng lúc · Giờ CI/CO đọc từ chữ trên ảnh (OCR tự động)</div>
+                <div className="text-[10px] text-slate-500 mt-0.5">Có thể chọn nhiều file cùng lúc · Giờ CI đọc từ chữ trên ảnh (OCR tự động toàn ảnh)</div>
               </div>
             )}
           </label>
@@ -890,14 +936,14 @@ export default function ReportView({ refreshKey }) {
           {/* OCR Info box */}
           <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 space-y-2">
             <div className="flex items-center gap-2 text-indigo-800 font-bold text-xs">
-              <i className="fa-solid fa-eye text-indigo-600" /> Đọc Giờ Từ Ảnh (OCR)
+              <i className="fa-solid fa-eye text-indigo-600" /> Đọc Giờ Từ Ảnh (OCR Toàn Ảnh)
             </div>
             <p className="text-[11px] text-indigo-700 leading-relaxed">
-              Hệ thống dùng <strong>Tesseract.js</strong> để đọc giờ CI/CO được ghi trên ảnh.
-              <br/>OCR tự động chạy khi bạn <strong>click chọn một dòng store</strong> để xem chi tiết — không làm chậm quá trình upload.
+              Hệ thống quét <strong>toàn bộ diện tích ảnh</strong> để tìm watermark ngày giờ (góc trên bên phải, góc dưới, v.v.).
+              <br/>OCR tự động chạy ngầm ngay khi upload Zip.
             </p>
             <div className="text-[10px] text-indigo-500 bg-indigo-100 rounded-lg px-2.5 py-1.5">
-              💡 OCR quét phần dưới ảnh (vị trí chữ timestamp). Lần đầu tải Tesseract engine ~2MB.
+              💡 Hỗ trợ nhận diện giờ ở mọi vị trí trên ảnh chụp ứng dụng UFF.
             </div>
           </div>
         </div>
@@ -963,7 +1009,7 @@ export default function ReportView({ refreshKey }) {
         <div className="ml-auto self-end text-xs text-slate-400 pb-2">
           {selectedRow
             ? <span className="text-teal-700 font-bold">✓ {selectedRow.storeName}</span>
-            : <span>{displayRows.length} dòng · Click chọn store để xem ảnh + quét OCR giờ CI</span>}
+            : <span>{displayRows.length} dòng · Click chọn store để xem ảnh CI</span>}
         </div>
       </div>
 
@@ -1005,7 +1051,7 @@ export default function ReportView({ refreshKey }) {
                   <table className="w-full border-collapse text-xs min-w-[900px]">
                     <thead>
                       <tr className="bg-slate-50 text-slate-500 text-left">
-                        {['Ngày','Store Code','Tên Store / Siêu Thị','Nhân Viên (BA)','Ca Làm (Lịch)','SUP','Ảnh CI','Giờ CI','Giờ CO','Trạng Thái'].map(h=>(
+                        {['Ngày','Store Code','Tên Store / Siêu Thị','Nhân Viên (BA)','Ca Làm (Lịch)','SUP','Ảnh CI','Giờ CI','Trạng Thái'].map(h=>(
                           <th key={h} className="px-3.5 py-2.5 text-[10px] font-bold uppercase tracking-wider whitespace-nowrap border-b border-slate-200">{h}</th>
                         ))}
                       </tr>
@@ -1053,12 +1099,9 @@ export default function ReportView({ refreshKey }) {
                                 </span>
                               ) : (
                                 <span className={r.status==='Đi trễ'?'text-amber-700':r.status==='Chưa CI'?'text-rose-500':'text-emerald-700'}>
-                                  {r.ciTime}
+                                  {r.ciTime || '—'}
                                 </span>
                               )}
-                            </td>
-                            <td className="px-3.5 py-3 font-mono text-slate-500 text-[11px]">
-                              {r.ocrScanning ? <i className="fa-solid fa-circle-notch animate-spin text-[10px] text-indigo-400" /> : r.coTime}
                             </td>
                             <td className="px-3.5 py-3 whitespace-nowrap">
                               <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border ${STATUS_STYLE[r.status]||''}`}>
@@ -1090,9 +1133,9 @@ export default function ReportView({ refreshKey }) {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              {selectedRow.hasZip && !selectedRow.ocrDone && !selectedRow.ocrScanning && (
+              {selectedRow.hasZip && (!selectedRow.ciTime || selectedRow.ciTime === '—') && !selectedRow.ocrScanning && (
                 <button
-                  onClick={() => triggerOCR(selectedRow.id, selectedRow.ciBlobs, selectedRow.coBlobs)}
+                  onClick={() => triggerOCR(selectedRow.id, selectedRow.ciBlobs)}
                   className="text-[11px] bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-lg font-bold cursor-pointer transition-colors flex items-center gap-1.5">
                   <i className="fa-solid fa-eye" /> Quét Giờ OCR
                 </button>
@@ -1122,9 +1165,7 @@ export default function ReportView({ refreshKey }) {
                 ['Ca Làm Việc', selectedRow.workingTime],
                 ['Supervisor', selectedRow.sup],
                 ['Giờ Check-In', selectedRow.ocrScanning ? '🔍 đang quét...' : selectedRow.ciTime],
-                ['Giờ Check-Out', selectedRow.ocrScanning ? '🔍 đang quét...' : selectedRow.coTime],
                 ['Số ảnh CI', selectedRow.ciPhotos.length],
-                ['Số ảnh CO', selectedRow.coPhotos.length],
               ].map(([lbl, val]) => (
                 <div key={lbl} className="flex items-center justify-between text-xs py-1.5 border-b border-slate-100 last:border-0">
                   <span className="text-slate-500 font-medium">{lbl}</span>
@@ -1141,12 +1182,28 @@ export default function ReportView({ refreshKey }) {
 
             {/* Photos */}
             <div className="space-y-3">
-              <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 pb-2">Hình Ảnh CI / CO</h4>
-              <div className="grid grid-cols-2 gap-3">
-                <PhotoCol label="📷 Check-In (CI)" photos={selectedRow.ciPhotos} color="emerald"
-                  onZoom={(p)=>{ setPreviewList(selectedRow.ciPhotos); setPreviewImage(p); }} />
-                <PhotoCol label="📷 Check-Out (CO)" photos={selectedRow.coPhotos} color="blue"
-                  onZoom={(p)=>{ setPreviewList(selectedRow.coPhotos); setPreviewImage(p); }} />
+              <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 pb-2">Hình Ảnh Check-In (CI)</h4>
+              <div>
+                {selectedRow.ciPhotos.length ? (
+                  <>
+                    <img src={selectedRow.ciPhotos[0]} alt="CI"
+                      onClick={()=>{ setPreviewList(selectedRow.ciPhotos); setPreviewImage(selectedRow.ciPhotos[0]); }}
+                      className="w-full h-52 object-cover rounded-xl border-2 border-emerald-200 cursor-zoom-in hover:opacity-90 transition-all" />
+                    {selectedRow.ciPhotos.length > 1 && (
+                      <div className="flex gap-1.5 mt-2 overflow-x-auto">
+                        {selectedRow.ciPhotos.map((p,i)=>(
+                          <img key={i} src={p} alt="" onClick={()=>{ setPreviewList(selectedRow.ciPhotos); setPreviewImage(p); }}
+                            className="w-14 h-14 rounded-lg object-cover border border-slate-200 cursor-zoom-in hover:opacity-80 flex-shrink-0" />
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="h-52 bg-rose-50 border-2 border-dashed border-rose-300 text-rose-400 rounded-xl flex flex-col items-center justify-center text-xs gap-1">
+                    <i className="fa-solid fa-image text-2xl" />
+                    <span className="font-bold">Chưa có ảnh CI</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1176,37 +1233,6 @@ export default function ReportView({ refreshKey }) {
               </div>
             )}
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ─── PhotoCol sub-component ───────────────────────── */
-function PhotoCol({ label, photos, color, onZoom }) {
-  const borderCls = color==='emerald' ? 'border-2 border-emerald-200' : 'border-2 border-blue-200';
-  const emptyBg   = color==='emerald' ? 'bg-rose-50 border-rose-300 text-rose-400' : 'bg-slate-100 border-slate-300 text-slate-400';
-  return (
-    <div>
-      <div className={`text-[11px] font-bold mb-1.5 ${color==='emerald'?'text-emerald-700':'text-blue-700'}`}>{label}</div>
-      {photos.length ? (
-        <>
-          <img src={photos[0]} alt={label}
-            onClick={()=>onZoom(photos[0])}
-            className={`w-full h-40 object-cover rounded-xl ${borderCls} cursor-zoom-in hover:opacity-90 transition-all`} />
-          {photos.length > 1 && (
-            <div className="flex gap-1 mt-1.5 overflow-x-auto">
-              {photos.slice(1).map((p,i)=>(
-                <img key={i} src={p} alt="" onClick={()=>onZoom(p)}
-                  className="w-12 h-12 rounded-lg object-cover border border-slate-200 cursor-zoom-in hover:opacity-80 flex-shrink-0" />
-              ))}
-            </div>
-          )}
-        </>
-      ) : (
-        <div className={`h-40 rounded-xl flex flex-col items-center justify-center text-xs border-2 border-dashed gap-1 ${emptyBg}`}>
-          <i className="fa-solid fa-image text-xl" />
-          <span className="font-bold">Chưa có ảnh</span>
         </div>
       )}
     </div>

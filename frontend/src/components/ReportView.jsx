@@ -14,14 +14,13 @@ const STATUS_STYLE = {
   'Chưa CI':  'bg-rose-100   text-rose-800   border-rose-200',
 };
 
-// Expanded UFF zip folder prefix & store code → normalized project name for ALL projects
+// UFF zip folder prefix & store code → normalized project name for actual projects in sheet
 const PREFIX_MAP = {
   PNG:'P&G', PG:'P&G', 'P&G':'P&G', BHX:'P&G', 'BÁCH HÓA XANH':'P&G', 'BACH HOA XANH':'P&G',
   MAG:'MAGGI', MGI:'MAGGI', MAGGI:'MAGGI', MGI_:'MAGGI',
   NCF:'NESTCAFE', NSF:'NESTCAFE', NSC:'NESTCAFE', NES:'NESTCAFE', NESTCAFE:'NESTCAFE', NESCAFE:'NESTCAFE',
   VDA:'VINDA', VND:'VINDA', VIN:'VINDA', VINDA:'VINDA', DRYPERS:'VINDA', TENA:'VINDA',
   STM:'STMB', STMB:'STMB', SUNTORY:'STMB', PEPSI:'STMB', SPB:'STMB',
-  UNI:'Unilever', UL:'Unilever', UNILEVER:'Unilever',
   AEO:'AEON', AEON:'AEON', AEONMALL:'AEON', AE:'AEON',
   LOT:'LOTTE', LOTTE:'LOTTE',
   COP:'COOP', COOP:'COOP', COOPXTRA:'COOP',
@@ -77,7 +76,6 @@ function normalizeProjName(p) {
   if (/MAGGI|MAG|MGI/.test(raw)) return 'MAGGI';
   if (/VINDA|VDA|VND|VIN/.test(raw)) return 'VINDA';
   if (/STMB|STM|SUNTORY/.test(raw)) return 'STMB';
-  if (/UNI/.test(raw)) return 'Unilever';
   if (/AEON|AEO/.test(raw)) return 'AEON';
   if (/LOTTE|LOT/.test(raw)) return 'LOTTE';
   if (/COOP|COP/.test(raw)) return 'COOP';

@@ -76,6 +76,131 @@ function normalizeProjName(p) {
   return p;
 }
 
+/** Flexible date parser into YYYY-MM-DD */
+function parseVNDate(str) {
+  if (!str) return null;
+  const s = String(str).trim();
+  let m;
+  m = s.match(/(\d+)\s+(?:tháng|thg)?\s*(\d+)[,\s]+(\d{4})/i);
+  if (m) return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`;
+  m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/);
+  if (m) return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`;
+  m = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
+  if (m) return `${m[1]}-${pad(+m[2])}-${pad(+m[3])}`;
+  m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  return null;
+}
+
+/** Detect UFF project folder: LETTERS_YYYYMMDD[_YYYYMMDD] */
+function detectProjFolder(part) {
+  const m = part.match(/^([A-Za-z&]+)_\d{8}(_\d{8})?$/);
+  if (!m) return '';
+  const raw = m[1].toUpperCase();
+  return normalizeProjName(raw);
+}
+
+/** Parse UFF file path into Date, Project, Store (Supermarket), and Employee */
+function parseUffPath(filePath) {
+  const parts = filePath.split(/[/\\]/);
+  const fileName = parts[parts.length - 1];
+
+  let datePart  = '';
+  let projLabel = '';
+
+  // 1. Scan folders for project & date
+  for (let i = 0; i < parts.length - 1; i++) {
+    const p = parts[i];
+    if (!projLabel) {
+      const pj = detectProjFolder(p);
+      if (pj) projLabel = pj;
+    }
+    const dParsed = parseVNDate(p);
+    if (dParsed && !datePart) datePart = dParsed;
+
+    const rangeMatch = p.match(/^[A-Za-z&]+_(\d{8})/);
+    if (rangeMatch && !datePart) {
+      const ds = rangeMatch[1];
+      datePart = `${ds.slice(0,4)}-${ds.slice(4,6)}-${ds.slice(6,8)}`;
+    }
+  }
+
+  if (!datePart) {
+    const fnDateMatch = fileName.match(/(\d{4})[_\-]?(\d{2})[_\-]?(\d{2})/);
+    if (fnDateMatch) datePart = `${fnDateMatch[1]}-${fnDateMatch[2]}-${fnDateMatch[3]}`;
+  }
+  if (!datePart) datePart = todayISO();
+
+  // 2. Extract non-date, non-project folders
+  const dirParts = parts.slice(0, parts.length - 1).filter(p =>
+    !/^\d{8}$/.test(p) && !detectProjFolder(p) && !parseVNDate(p) && !/^[A-Za-z&]+_\d{8}/.test(p)
+  );
+
+  let storePart = '';
+  let empPart   = '';
+
+  if (dirParts.length >= 2) {
+    // Innermost folder wrapping image is ALWAYS Store folder!
+    storePart = dirParts[dirParts.length - 1];
+    // Outer folder above Store is Employee folder!
+    empPart   = dirParts[dirParts.length - 2];
+  } else if (dirParts.length === 1) {
+    const p = dirParts[0];
+    // If it looks like employee ID (e.g. NV001_...) without store keywords
+    if (/^(NV|BA|PG|STAFF)\d+/i.test(p) && !/coop|bhx|win|bigc|go!|lotte|aeon|mart|pharmacity|siêu thị|st/i.test(p)) {
+      empPart = p;
+    } else {
+      storePart = p;
+    }
+  }
+
+  // Parse storeCode & storeName
+  let storeCode = '';
+  let storeName = storePart;
+
+  if (storePart) {
+    if (storePart.includes('_')) {
+      const idx = storePart.indexOf('_');
+      storeCode = storePart.slice(0, idx).trim();
+      storeName = storePart.slice(idx + 1).replace(/_/g, ' ').trim();
+    } else if (storePart.includes('-')) {
+      const idx = storePart.indexOf('-');
+      storeCode = storePart.slice(0, idx).trim();
+      storeName = storePart.slice(idx + 1).trim();
+    } else {
+      // Store part like "K08620 Coopmart Go Vap"
+      const codeMatch = storePart.match(/^([A-Za-z0-9]{3,8})\s+(.*)$/);
+      if (codeMatch) {
+        storeCode = codeMatch[1];
+        storeName = codeMatch[2];
+      } else {
+        storeCode = storePart;
+        storeName = storePart;
+      }
+    }
+  }
+
+  // Parse empCode & empName
+  let empCode = '';
+  let empName = empPart;
+  if (empPart && empPart.includes('_')) {
+    const idx = empPart.indexOf('_');
+    empCode = empPart.slice(0, idx).trim();
+    empName = empPart.slice(idx + 1).replace(/_/g, ' ').trim();
+  }
+
+  return {
+    datePart,
+    projLabel: normalizeProjName(projLabel),
+    storePart,
+    storeCode: storeCode || storePart || 'STORE',
+    storeName: storeName || storePart || 'Siêu Thị',
+    empCode,
+    empName,
+    fileName,
+  };
+}
+
 /** Robust store matcher: code, numeric, unaccented name, word overlap */
 function isStoreMatch(sched, zip) {
   // 1. Projects must align (if both known)
@@ -114,34 +239,6 @@ function isStoreMatch(sched, zip) {
   }
 
   return false;
-}
-
-/** Flexible date parser into YYYY-MM-DD */
-function parseVNDate(str) {
-  if (!str) return null;
-  const s = String(str).trim();
-  let m;
-  m = s.match(/(\d+)\s+(?:tháng|thg)?\s*(\d+)[,\s]+(\d{4})/i);
-  if (m) return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`;
-  m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/);
-  if (m) return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`;
-  m = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
-  if (m) return `${m[1]}-${pad(+m[2])}-${pad(+m[3])}`;
-  m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-  return null;
-}
-
-/** Detect UFF project folder: LETTERS_YYYYMMDD[_YYYYMMDD] */
-function detectProjFolder(part) {
-  const m = part.match(/^([A-Za-z&]+)_\d{8}(_\d{8})?$/);
-  if (!m) return '';
-  const raw = m[1].toUpperCase();
-  return normalizeProjName(raw);
-}
-
-function normStr(s) {
-  return cleanStoreStr(s);
 }
 
 /** Determine status: Đúng giờ / Đi trễ / Chưa CI */
@@ -270,53 +367,10 @@ export default function ReportView({ refreshKey }) {
         for (let idx = 0; idx < imagePaths.length; idx++) {
           if (idx % 20 === 0) setProgress(`${file.name}: ${idx+1}/${imagePaths.length} ảnh...`);
 
-          const fp    = imagePaths[idx];
-          const parts = fp.split(/[/\\]/);
-          const fileName = parts[parts.length - 1];
+          const fp = imagePaths[idx];
+          const { datePart, projLabel, storeCode, storeName, empName, fileName } = parseUffPath(fp);
 
-          let datePart  = '';
-          let shopPart  = '';
-          let projLabel = '';
-          let projFound = false;
-
-          for (let pi = 0; pi < parts.length - 1; pi++) {
-            const p = parts[pi];
-            if (!projFound) {
-              const pj = detectProjFolder(p);
-              if (pj) { projLabel = pj; projFound = true; }
-            }
-            let dParsed = parseVNDate(p);
-            if (dParsed) { datePart = dParsed; continue; }
-
-            const rangeMatch = p.match(/^[A-Za-z&]+_(\d{8})/);
-            if (rangeMatch && !datePart) {
-              const ds = rangeMatch[1];
-              datePart = `${ds.slice(0,4)}-${ds.slice(4,6)}-${ds.slice(6,8)}`;
-            }
-
-            if (p.includes('_') && !/^\d{8}$/.test(p) && !detectProjFolder(p)) shopPart = p;
-          }
-
-          if (!shopPart && parts.length >= 2) {
-            const parent = parts[parts.length - 2];
-            if (!/^\d{8}$/.test(parent) && !detectProjFolder(parent)) shopPart = parent;
-          }
-
-          if (!datePart) {
-            const fnDateMatch = fileName.match(/(\d{4})[_\-]?(\d{2})[_\-]?(\d{2})/);
-            if (fnDateMatch) datePart = `${fnDateMatch[1]}-${fnDateMatch[2]}-${fnDateMatch[3]}`;
-          }
-
-          if (!datePart) datePart = todayISO();
-          if (projLabel) detectedProject = normalizeProjName(projLabel);
-
-          let storeCode = shopPart || 'STORE';
-          let storeName = shopPart || 'Store ' + (idx + 1);
-          if (shopPart.includes('_')) {
-            const ux = shopPart.indexOf('_');
-            storeCode = shopPart.slice(0, ux);
-            storeName = shopPart.slice(ux + 1).replace(/_/g, ' ');
-          }
+          if (projLabel) detectedProject = projLabel;
 
           const fnLow = fileName.toLowerCase();
           const isCO  = /^co[_\-]|[_\-]co[_\-\.]/.test(fnLow);
@@ -329,7 +383,7 @@ export default function ReportView({ refreshKey }) {
           const key = `${datePart}||${storeCode.toUpperCase()}`;
           if (!storeMap[key]) {
             storeMap[key] = {
-              key, date: datePart, storeCode, storeName,
+              key, date: datePart, storeCode, storeName, empName,
               projLabel: finalProj,
               ciPhotos: [], coPhotos: [],
               ciBlobs:  [], coBlobs:  [],
@@ -469,7 +523,6 @@ export default function ReportView({ refreshKey }) {
 
     // 1. Loop Schedule entries and match with Zip
     schedForDate.forEach((sched, i) => {
-      // Robust match
       let zip = null;
       for (const z of zipForDate) {
         if (matchedZipKeys.has(z.key)) continue;
@@ -494,8 +547,9 @@ export default function ReportView({ refreshKey }) {
         date:        sched.isoDate,
         project:     normalizeProjName(sched.project || zip?.projLabel),
         brand:       sched.brand || zip?.projLabel || '—',
-        storeCode:   zip?.storeCode || sched.storeCode,
-        storeName:   zip?.storeName || sched.storeName,
+        storeCode:   sched.storeCode || zip?.storeCode,
+        storeName:   sched.storeName || zip?.storeName,
+        empName:     zip?.empName || '—',
         workingTime: sched.workingTime || '—',
         sup:         sched.sup || '—',
         region:      sched.region || '—',
@@ -514,7 +568,7 @@ export default function ReportView({ refreshKey }) {
       });
     });
 
-    // 2. Loop unmatched Zip entries (Stores from Zip not matched to schedule)
+    // 2. Loop unmatched Zip entries
     zipForDate.forEach((zip, i) => {
       if (matchedZipKeys.has(zip.key)) return;
 
@@ -532,6 +586,7 @@ export default function ReportView({ refreshKey }) {
         brand:       normP,
         storeCode:   zip.storeCode,
         storeName:   zip.storeName,
+        empName:     zip.empName || '—',
         workingTime: '—',
         sup:         '—',
         region:      '—',
@@ -562,7 +617,8 @@ export default function ReportView({ refreshKey }) {
       const q = cleanStoreStr(search);
       filtered = filtered.filter(r =>
         cleanStoreStr(r.storeName).includes(q) || cleanStoreStr(r.storeCode).includes(q) ||
-        cleanStoreStr(r.sup).includes(q) || cleanStoreStr(r.project).includes(q)
+        cleanStoreStr(r.sup).includes(q) || cleanStoreStr(r.project).includes(q) ||
+        cleanStoreStr(r.empName).includes(q)
       );
     }
 
@@ -573,7 +629,7 @@ export default function ReportView({ refreshKey }) {
     return filtered;
   }, [scheduleRows, mergedZipMap, selDate, selProject, selStatus, search, ocrState]);
 
-  // Group BY PROJECT ONLY (So Schedule + Zip for NESTCAFE render in ONE single block)
+  // Group BY PROJECT ONLY
   const groupedRows = useMemo(() => {
     const m = new Map();
     for (const r of displayRows) {
@@ -705,7 +761,7 @@ export default function ReportView({ refreshKey }) {
 
           <p className="text-xs text-slate-400 leading-relaxed">
             Mỗi dự án xuất <strong className="text-teal-200">một file Zip riêng</strong> từ web UFF → upload từng file. Hệ thống tự tích lũy dữ liệu.
-            <br/>Cấu trúc: <code className="text-teal-300 text-[10px]">PnG_20260720_20260726 / 20260720 / BHX001_BHX Dang Van Bi / CI_xxx.jpg</code>
+            <br/>Cấu trúc: <code className="text-teal-300 text-[10px]">PnG_20260720_20260726 / 20260720 / NV001_Nguyen Van A / BHX001_BHX Dang Van Bi / CI_xxx.jpg</code>
           </p>
 
           {/* Drop zone */}
@@ -741,7 +797,6 @@ export default function ReportView({ refreshKey }) {
                 <div key={sess.id}
                   className="flex items-center justify-between gap-3 bg-teal-800/30 border border-teal-700/30 rounded-xl px-4 py-2.5">
                   <div className="flex items-center gap-3 min-w-0">
-                    {/* Project badge */}
                     <span className="shrink-0 bg-teal-500/20 text-teal-300 border border-teal-500/30 text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wide">
                       {sess.project}
                     </span>
@@ -837,7 +892,7 @@ export default function ReportView({ refreshKey }) {
         <div>
           <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">🔍 Tìm kiếm</label>
           <input type="text" value={search} onChange={e=>setSearch(e.target.value)}
-            placeholder="Store, SUP, dự án..."
+            placeholder="Store, BA, SUP, dự án..."
             className="border border-slate-200 rounded-xl px-3 py-2 text-xs bg-slate-50 focus:bg-white text-slate-700 outline-none focus:ring-2 focus:ring-teal-200 focus:border-teal-400 w-48 font-medium" />
         </div>
         <div>
@@ -911,7 +966,7 @@ export default function ReportView({ refreshKey }) {
                   <table className="w-full border-collapse text-xs min-w-[900px]">
                     <thead>
                       <tr className="bg-slate-50 text-slate-500 text-left">
-                        {['Ngày','Store Code','Tên Store / Siêu Thị','Ca Làm (Lịch)','SUP','Ảnh CI','Giờ CI','Giờ CO','Trạng Thái'].map(h=>(
+                        {['Ngày','Store Code','Tên Store / Siêu Thị','Nhân Viên (BA)','Ca Làm (Lịch)','SUP','Ảnh CI','Giờ CI','Giờ CO','Trạng Thái'].map(h=>(
                           <th key={h} className="px-3.5 py-2.5 text-[10px] font-bold uppercase tracking-wider whitespace-nowrap border-b border-slate-200">{h}</th>
                         ))}
                       </tr>
@@ -930,6 +985,7 @@ export default function ReportView({ refreshKey }) {
                             <td className="px-3.5 py-3 font-mono text-slate-500 text-[11px] whitespace-nowrap">{r.date}</td>
                             <td className="px-3.5 py-3 font-mono font-bold text-slate-600 text-[11px]">{r.storeCode}</td>
                             <td className="px-3.5 py-3 font-bold text-slate-800 whitespace-nowrap">{r.storeName}</td>
+                            <td className="px-3.5 py-3 text-slate-600 whitespace-nowrap text-[11px]">{r.empName || '—'}</td>
                             <td className="px-3.5 py-3 text-slate-600 whitespace-nowrap text-[11px]">{r.workingTime||'—'}</td>
                             <td className="px-3.5 py-3 text-slate-600 whitespace-nowrap text-[11px]">{r.sup||'—'}</td>
                             <td className="px-3.5 py-3">
@@ -991,7 +1047,7 @@ export default function ReportView({ refreshKey }) {
                 <i className="fa-solid fa-store" /> {selectedRow.storeName}
               </h3>
               <p className="text-xs text-teal-100 mt-0.5">
-                {selectedRow.date} · {selectedRow.project} · Brand: {selectedRow.brand} · {selectedRow.storeCode}
+                {selectedRow.date} · {selectedRow.project} · Brand: {selectedRow.brand} · Mã Store: {selectedRow.storeCode}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -1021,6 +1077,9 @@ export default function ReportView({ refreshKey }) {
               {[
                 ['Dự Án', selectedRow.project],
                 ['Brand', selectedRow.brand],
+                ['Tên Siêu Thị', selectedRow.storeName],
+                ['Mã Siêu Thị', selectedRow.storeCode],
+                ['Nhân Viên (BA)', selectedRow.empName],
                 ['Ca Làm Việc', selectedRow.workingTime],
                 ['Supervisor', selectedRow.sup],
                 ['Giờ Check-In', selectedRow.ocrScanning ? '🔍 đang quét...' : selectedRow.ciTime],

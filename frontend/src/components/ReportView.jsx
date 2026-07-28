@@ -118,29 +118,52 @@ function detectProjFolder(part) {
 
 /** 
  * Extract time from OCR text — handles AM/PM, 12h→24h, Vietnamese SA/CH.
- * Prioritizes AM/PM patterns to avoid picking up random numbers as times.
+ * Specifically parses date+time lines like "28/07/2026 01:53:01 PM" or "08:03:31 AM".
  */
-function extractTimeText(text) {
-  if (!text) return null;
+function extractTimeText(rawText) {
+  if (!rawText) return null;
+  let text = String(rawText)
+    .replace(/[PN]M\b/gi, 'PM')
+    .replace(/A[MN]\b/gi, 'AM')
+    .replace(/S[AH]\b/gi, 'SA')
+    .replace(/C[H]\b/gi, 'CH');
+
   let match;
 
-  // 1. AM/PM format: "02:27:38PM", "2:27:38 PM", "02:27PM", "14:27:38CH"
-  const ampmRegex = /(\d{1,2})[:\.]?(\d{2})(?:[:\.]?(\d{2}))?\s*(AM|PM|am|pm|SA|CH|Sa|Ch)/g;
+  // 1. Explicit Date + Time pattern: "28/07/2026 01:53:01 PM" or "2026-07-28 08:03:31 AM"
+  const dateTimeRegex = /\b\d{1,4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,4}\s+([01]?\d|2[0-3])[:\.](\d{2})(?:[:\.](\d{2}))?\s*(AM|PM|SA|CH)?/gi;
+  while ((match = dateTimeRegex.exec(text)) !== null) {
+    let h = parseInt(match[1]);
+    const min = parseInt(match[2]);
+    const period = (match[4] || '').toUpperCase();
+    if (min <= 59) {
+      if (period === 'PM' || period === 'CH') {
+        if (h < 12) h += 12;
+      } else if (period === 'AM' || period === 'SA') {
+        if (h === 12) h = 0;
+      }
+      return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+    }
+  }
+
+  // 2. AM/PM or SA/CH pattern with explicit colon: "01:53:01 PM", "8:03:31 AM", "02:27 PM"
+  const ampmRegex = /\b([01]?\d|2[0-3])[:\.](\d{2})(?:[:\.](\d{2}))?\s*(AM|PM|SA|CH)\b/gi;
   while ((match = ampmRegex.exec(text)) !== null) {
     let h = parseInt(match[1]);
     const min = parseInt(match[2]);
     const period = match[4].toUpperCase();
-    if (h < 1 || h > 12 || min > 59) continue;
-    if (period === 'PM' || period === 'CH') {
-      if (h !== 12) h += 12;
-    } else {
-      if (h === 12) h = 0;
+    if (h >= 0 && h <= 23 && min <= 59) {
+      if (period === 'PM' || period === 'CH') {
+        if (h < 12) h += 12;
+      } else if (period === 'AM' || period === 'SA') {
+        if (h === 12) h = 0;
+      }
+      return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
     }
-    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
   }
 
-  // 2. Full HH:MM:SS (24h) — most reliable since seconds confirm it's a timestamp
-  const fullTimeRegex = /(\d{1,2})[:\.](\d{2})[:\.](\d{2})/g;
+  // 3. Full HH:MM:SS 24-hour pattern: "13:53:01" or "08:03:31"
+  const fullTimeRegex = /\b([01]?\d|2[0-3])[:\.](\d{2})[:\.](\d{2})\b/g;
   while ((match = fullTimeRegex.exec(text)) !== null) {
     const h = parseInt(match[1]);
     const min = parseInt(match[2]);
@@ -150,8 +173,8 @@ function extractTimeText(text) {
     }
   }
 
-  // 3. HH:MM (24h) only — restrict to plausible work hours (5-22) to avoid false positives from addresses/phone numbers
-  const shortTimeRegex = /\b(\d{1,2})[:\.](\d{2})\b/g;
+  // 4. Standalone HH:MM pattern (5h to 22h)
+  const shortTimeRegex = /\b([01]?\d|2[0-3])[:\.](\d{2})\b/g;
   while ((match = shortTimeRegex.exec(text)) !== null) {
     const h = parseInt(match[1]);
     const min = parseInt(match[2]);

@@ -9,8 +9,18 @@ import ScheduleView from './components/ScheduleView';
 import HRView       from './components/HRView';
 import ReportView   from './components/ReportView';
 
+function getInitialUser() {
+  try {
+    const saved = localStorage.getItem('dashboard_user');
+    return saved ? JSON.parse(saved) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 function App() {
-  const [user,         setUser]         = useState(null);
+  const [user,         setUser]         = useState(getInitialUser);
+  const [authLoading,  setAuthLoading]  = useState(true);
   const [activeTab,    setActiveTab]    = useState('summary');
   const [refreshKey,   setRefreshKey]   = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -18,13 +28,27 @@ function App() {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChangedListener((u) => {
-      if (u) setUser(u);
+      if (u) {
+        setUser(u);
+        try {
+          localStorage.setItem('dashboard_user', JSON.stringify(u));
+        } catch (e) {}
+      }
+      setAuthLoading(false);
     });
     return () => unsubscribe();
   }, []);
 
+  const handleLoginSuccess = (u) => {
+    setUser(u);
+    try {
+      localStorage.setItem('dashboard_user', JSON.stringify(u));
+    } catch (e) {}
+  };
+
   const handleLogout = async () => {
     try { await signOutUser(); } catch (e) { console.warn('Signout error:', e); }
+    try { localStorage.removeItem('dashboard_user'); } catch (e) {}
     setUser(null);
   };
 
@@ -41,8 +65,18 @@ function App() {
     }, 800);
   };
 
+  // Show quick spinner while Firebase auth listener initializes if no saved user in localStorage
+  if (authLoading && !user) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white">
+        <div className="w-12 h-12 border-4 border-teal-500/30 border-t-teal-400 rounded-full animate-spin mb-3" />
+        <p className="text-sm font-bold text-slate-300">Đang kiểm tra phiên đăng nhập...</p>
+      </div>
+    );
+  }
+
   if (!user) {
-    return <LoginOverlay onLoginSuccess={(u) => setUser(u)} />;
+    return <LoginOverlay onLoginSuccess={handleLoginSuccess} />;
   }
 
   return (

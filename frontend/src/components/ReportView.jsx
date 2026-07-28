@@ -111,6 +111,38 @@ export default function ReportView({ refreshKey }) {
     setIsProcessingZip(true);
     setZipProgress('Đang đọc file zip...');
 
+    // ── Project prefix → full name mapping ──────────────────────────
+    // Covers all known UFF export prefixes. Add more as needed.
+    const PROJECT_MAP = {
+      // P&G variants
+      'PNG': 'P&G', 'PNG': 'P&G', 'PG': 'P&G', 'P&G': 'P&G',
+      // MAGGI / Nestle
+      'MAG': 'MAGGI', 'MAGGI': 'MAGGI', 'MGI': 'MAGGI',
+      // NESTCAFE / NESCAFE
+      'NCF': 'NESTCAFE', 'NSF': 'NESTCAFE', 'NESTCAFE': 'NESTCAFE',
+      'NESCAFE': 'NESTCAFE', 'NSC': 'NESTCAFE', 'NES': 'NESTCAFE',
+      // VINDA
+      'VDA': 'VINDA', 'VND': 'VINDA', 'VINDA': 'VINDA', 'VIN': 'VINDA',
+      // Others — add as needed
+      'STM': 'STMB', 'STMB': 'STMB',
+      'UNI': 'Unilever', 'UL': 'Unilever', 'UNILEVER': 'Unilever',
+      'AEO': 'AEON', 'AEON': 'AEON',
+    };
+
+    /**
+     * Detects the project folder using the pattern:
+     *   PREFIX_YYYYMMDD_YYYYMMDD   (e.g. PnG_20260720_20260726)
+     *   or PREFIX_YYYYMMDD          (e.g. MAG_20260720)
+     * Works for ANY prefix, not just hardcoded ones.
+     */
+    const detectProjectFolder = (part) => {
+      // Must match: LETTERS_8DIGITS or LETTERS_8DIGITS_8DIGITS
+      const m = part.match(/^([A-Za-z&]+)_\d{8}(_\d{8})?$/);
+      if (!m) return '';
+      const prefix = m[1].toUpperCase();
+      return PROJECT_MAP[prefix] || prefix; // return mapped name or raw prefix
+    };
+
     try {
       const zip = await JSZip.loadAsync(file);
       const storeMap = {};
@@ -132,35 +164,48 @@ export default function ReportView({ refreshKey }) {
         }
 
         const parts = filePath.split(/[/\\]/);
-        // Expected: PnG_20260720_20260726/20260720/BHX001_BHX Dang Van Bi/image.jpg
+        // Expected structure (depth-flexible):
+        //   [root/] ProjFolder / DateFolder / ShopFolder / image.jpg
         
         let datePart = '';
         let shopPart = '';
         let projPart = '';
+        let projFolderFound = false;
 
-        for (const p of parts) {
-          // Detect project folder: PnG_20260720_20260726
-          if (/^(PnG|P&G|MAGGI|NESTCAFE|NESCAFE|VINDA)/i.test(p) && p.includes('_')) {
-            projPart = p.split('_')[0].toUpperCase();
-            if (projPart === 'PNG') projPart = 'P&G';
-            if (projPart === 'NESCAFE') projPart = 'NESTCAFE';
+        for (let pi = 0; pi < parts.length; pi++) {
+          const p = parts[pi];
+
+          // 1. Detect project folder: LETTERS_YYYYMMDD[_YYYYMMDD]
+          const detectedProj = detectProjectFolder(p);
+          if (detectedProj && !projFolderFound) {
+            projPart = detectedProj;
+            projFolderFound = true;
+            continue;
           }
-          // Detect date folder: 20260720
+
+          // 2. Detect date folder: exactly 8 digits YYYYMMDD
           if (/^\d{8}$/.test(p)) {
             datePart = `${p.slice(0,4)}-${p.slice(4,6)}-${p.slice(6,8)}`;
+            continue;
           }
-          // Detect shop folder: BHX001_BHX Dang Van Bi (has _ but is not a date or project or image)
-          if (p.includes('_') && !/^\d{8}$/.test(p) && !/\.(jpg|jpeg|png|webp)$/i.test(p) && !/^(PnG|P&G|MAGGI|NESTCAFE|NESCAFE|VINDA)/i.test(p)) {
+
+          // 3. Detect shop folder: contains underscore, not an image file, not a date folder, not the last part (filename)
+          const isImageFile = /\.(jpg|jpeg|png|webp)$/i.test(p);
+          const isLastPart = pi === parts.length - 1;
+          if (!isLastPart && !isImageFile && p.includes('_') && !/^\d{8}$/.test(p)) {
             shopPart = p;
           }
         }
 
-        // Fallback: use parent folder as shop
+        // Fallback: if still no shopPart, take parent folder of the image
         if (!shopPart && parts.length >= 2) {
-          shopPart = parts[parts.length - 2];
+          const parent = parts[parts.length - 2];
+          if (!/^\d{8}$/.test(parent) && !detectProjectFolder(parent)) {
+            shopPart = parent;
+          }
         }
-        if (!datePart) continue; // skip if we can't determine the date
 
+        if (!datePart) continue; // skip if we can't determine the date
         if (projPart) detectedProject = projPart;
 
         const fileName = parts[parts.length - 1];

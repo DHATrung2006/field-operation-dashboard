@@ -12,7 +12,7 @@ export default function Header({ user, onLogout, activeTab, onTabChange, onRefre
     { id: 'summary',  label: 'Summary',       icon: 'fa-chart-pie' },
     { id: 'schedule', label: 'Lịch làm BA',   icon: 'fa-calendar-days' },
     { id: 'hr',       label: 'HR',             icon: 'fa-user-plus' },
-    { id: 'report',   label: 'Báo Cáo / UFF', icon: 'fa-link' },
+    { id: 'report',   label: 'Báo cáo UFF',   icon: 'fa-camera' },
   ];
 
   return (

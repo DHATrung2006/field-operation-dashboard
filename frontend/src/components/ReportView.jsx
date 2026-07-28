@@ -4,11 +4,9 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { fetchMasterData } from '../api/googleSheets';
 
-/* ═══════════════════════════════════════════════════════════════
-   CONSTANTS
-   ═══════════════════════════════════════════════════════════════ */
-const UFF_BASE_URL = 'https://uff.interdist.com.vn/';
-const UFF_USER     = 'TRUNG.DHA';
+/* ─── Constants ─────────────────────────────────────────────── */
+const UFF_BASE = 'https://uff.interdist.com.vn/';
+const UFF_USER = 'TRUNG.DHA';
 
 const STATUS_STYLE = {
   'Đúng giờ': 'bg-emerald-100 text-emerald-800 border-emerald-200',
@@ -16,44 +14,38 @@ const STATUS_STYLE = {
   'Chưa CI':  'bg-rose-100   text-rose-800   border-rose-200',
 };
 
-// Map all known UFF zip folder prefixes → full project/brand display name
+// UFF zip folder prefix → full project name
 const PREFIX_MAP = {
-  // P&G
   PNG:'P&G', PG:'P&G', 'P&G':'P&G',
-  // MAGGI / Nestle
   MAG:'MAGGI', MGI:'MAGGI', MAGGI:'MAGGI',
-  // NESTCAFE / NESCAFE
   NCF:'NESTCAFE', NSF:'NESTCAFE', NSC:'NESTCAFE', NES:'NESTCAFE',
   NESTCAFE:'NESTCAFE', NESCAFE:'NESTCAFE',
-  // VINDA
   VDA:'VINDA', VND:'VINDA', VIN:'VINDA', VINDA:'VINDA',
-  // Others
   STM:'STMB', STMB:'STMB',
   UNI:'Unilever', UL:'Unilever', UNILEVER:'Unilever',
   AEO:'AEON', AEON:'AEON',
 };
 
-/* ═══════════════════════════════════════════════════════════════
-   PURE HELPERS
-   ═══════════════════════════════════════════════════════════════ */
+/* ─── Pure Helpers ──────────────────────────────────────────── */
 function todayISO() {
   const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 }
+function pad(n) { return String(n).padStart(2,'0'); }
 
-function parseVNDateISO(str) {
+function parseVNDate(str) {
   if (!str) return null;
   let m;
   m = str.match(/(\d+)\s+tháng\s+(\d+),\s+(\d+)/i);
-  if (m) return `${m[3]}-${String(+m[2]).padStart(2,'0')}-${String(+m[1]).padStart(2,'0')}`;
+  if (m) return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`;
   m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (m) return `${m[3]}-${String(+m[2]).padStart(2,'0')}-${String(+m[1]).padStart(2,'0')}`;
+  if (m) return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`;
   m = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (m) return `${m[1]}-${String(+m[2]).padStart(2,'0')}-${String(+m[3]).padStart(2,'0')}`;
+  if (m) return `${m[1]}-${pad(+m[2])}-${pad(+m[3])}`;
   return null;
 }
 
-/** Detect UFF project-range folder: PREFIX_YYYYMMDD[_YYYYMMDD] */
+/** Detect UFF project folder: LETTERS_YYYYMMDD[_YYYYMMDD] */
 function detectProjFolder(part) {
   const m = part.match(/^([A-Za-z&]+)_\d{8}(_\d{8})?$/);
   if (!m) return '';
@@ -61,352 +53,347 @@ function detectProjFolder(part) {
   return PREFIX_MAP[raw] || raw;
 }
 
-/** Normalize store name for fuzzy matching */
 function normStr(s) {
-  return (s || '').trim().toLowerCase().replace(/[_\-\.]/g, ' ').replace(/\s+/g, ' ');
+  return (s||'').trim().toLowerCase().replace(/[_\-\.]/g,' ').replace(/\s+/g,' ');
 }
 
-/** Read EXIF DateTimeOriginal from a JPEG Blob → "HH:MM" or null */
-async function readExifTime(blob) {
-  try {
-    // Dynamically import exifr only when needed (keeps initial bundle small)
-    const exifr = (await import('exifr')).default;
-    const tags  = await exifr.parse(blob, { DateTimeOriginal: true, DateTime: true });
-    const dt    = tags?.DateTimeOriginal || tags?.DateTime;
-    if (dt instanceof Date) {
-      return `${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
-    }
-  } catch (_) {}
-  return null;
-}
-
-/** Extract HH:MM from filename patterns like CI_20260728_081523.jpg or CI0815.jpg */
-function timeFromFilename(fileName) {
-  // Pattern: 6-digit compact HHMMSS somewhere in name
-  let m = fileName.match(/[_\-](\d{2})(\d{2})\d{2}[_\-.]/) || fileName.match(/(\d{2})(\d{2})\d{2}\./);
-  if (m && +m[1] <= 23 && +m[2] <= 59) return `${m[1]}:${m[2]}`;
-  // Pattern: HH-MM or HH:MM in name
-  m = fileName.match(/[_\-](\d{2})[:\-](\d{2})/);
-  if (m && +m[1] <= 23 && +m[2] <= 59) return `${m[1]}:${m[2]}`;
-  // Pattern: 4-digit HHMM
-  m = fileName.match(/[_\-](\d{2})(\d{2})[_\-\.]/);
-  if (m && +m[1] <= 23 && +m[2] <= 59) return `${m[1]}:${m[2]}`;
-  return null;
-}
-
-/** Determine "Đúng giờ" | "Đi trễ" | "Chưa CI" */
+/** Determine status: Đúng giờ / Đi trễ / Chưa CI */
 function calcStatus(ciTime, workingTime) {
   if (!ciTime || ciTime === '—') return 'Chưa CI';
   if (!workingTime) return 'Đúng giờ';
   const sm = workingTime.match(/(\d{1,2}):(\d{2})/);
   const cm = ciTime.match(/(\d{1,2}):(\d{2})/);
   if (!sm || !cm) return 'Đúng giờ';
-  const schedMins = +sm[1] * 60 + +sm[2];
-  const ciMins    = +cm[1] * 60 + +cm[2];
+  const schedMins = +sm[1]*60 + +sm[2];
+  const ciMins    = +cm[1]*60 + +cm[2];
   return ciMins > schedMins + 5 ? 'Đi trễ' : 'Đúng giờ';
+}
+
+/* ─── OCR via Tesseract.js (lazy-loaded) ───────────────────── */
+let _tesseractWorker = null;
+
+async function getOCRWorker() {
+  if (!_tesseractWorker) {
+    const { createWorker } = await import('tesseract.js');
+    _tesseractWorker = await createWorker('eng');
+  }
+  return _tesseractWorker;
+}
+
+/**
+ * Crop bottom 30% of an image blob and run OCR to find a time pattern.
+ * Images from UFF app have the timestamp watermarked at the bottom.
+ */
+async function ocrTimeFromBlob(blob) {
+  try {
+    const bitmap = await createImageBitmap(blob);
+    const canvas = document.createElement('canvas');
+    // Crop bottom 30% — where UFF timestamps usually appear
+    const cropH = Math.max(60, Math.floor(bitmap.height * 0.30));
+    canvas.width  = bitmap.width;
+    canvas.height = cropH;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, bitmap.height - cropH, bitmap.width, cropH, 0, 0, bitmap.width, cropH);
+
+    // Enhance contrast: invert if background is dark (white text)
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const d = imgData.data;
+    let brightPx = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i] > 128) brightPx++;
+    }
+    const isMostlyDark = brightPx < (d.length / 4) * 0.5;
+    if (isMostlyDark) {
+      for (let i = 0; i < d.length; i += 4) {
+        d[i]   = 255 - d[i];
+        d[i+1] = 255 - d[i+1];
+        d[i+2] = 255 - d[i+2];
+      }
+      ctx.putImageData(imgData, 0, 0);
+    }
+
+    const worker = await getOCRWorker();
+    const { data } = await worker.recognize(canvas);
+    const text = data.text;
+
+    // Extract HH:MM or HH:MM:SS pattern
+    const m = text.match(/\b([01]?\d|2[0-3])[:\.h]([0-5]\d)(?:[:\.][0-5]\d)?\b/);
+    if (m) return `${pad(+m[1])}:${pad(+m[2])}`;
+  } catch (e) {
+    console.warn('OCR failed:', e.message);
+  }
+  return null;
 }
 
 /* ═══════════════════════════════════════════════════════════════
    MAIN COMPONENT
    ═══════════════════════════════════════════════════════════════ */
 export default function ReportView({ refreshKey }) {
-  const [masterData, setMasterData]   = useState([]);
-  // uffZipData: Map<"storeCode||date", { storeCode, storeName, projLabel, ciPhotos, coPhotos, ciTime, coTime }>
-  const [uffZipData, setUffZipData]   = useState(null);
-  const [zipStats,   setZipStats]     = useState(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [zipProgress,  setZipProgress]  = useState('');
-  const [zipFileName,  setZipFileName]  = useState('');
+  const [masterData, setMasterData] = useState([]);
+
+  // Each uploaded zip is a "session"
+  const [sessions, setSessions] = useState([]); // [{ id, fileName, project, dates, storeMap }]
 
   // Filters
   const [search,     setSearch]     = useState('');
   const [selProject, setSelProject] = useState('Tất cả');
   const [selDate,    setSelDate]    = useState(todayISO);
   const [selStatus,  setSelStatus]  = useState('');
-  const [selectedRow, setSelectedRow] = useState(null);
-  const [previewImage, setPreviewImage] = useState(null);
-  const [previewImages, setPreviewImages] = useState([]); // all photos for lightbox
 
-  // API
+  const [selectedRow,  setSelectedRow]  = useState(null);
+  const [previewImage, setPreviewImage] = useState(null);
+  const [previewList,  setPreviewList]  = useState([]);
+
+  // OCR state per row: { rowId → 'scanning' | { ciTime, coTime } }
+  const [ocrState, setOcrState] = useState({});
+
+  // API test
   const [apiStatus, setApiStatus] = useState('idle');
   const [apiMsg,    setApiMsg]    = useState('');
 
-  const fileInputRef = useRef();
+  const fileInputRef  = useRef();
+  const projectRefs   = useRef({});
+  const modalRef      = useRef();
 
   /* ── Load Master Data ── */
   useEffect(() => {
     fetchMasterData()
       .then(d => { if (Array.isArray(d)) setMasterData(d); })
-      .catch(e => console.warn('Master data error:', e));
+      .catch(() => {});
   }, [refreshKey]);
 
   /* ═══════════════════════════════════════════════════════════════
-     ZIP PARSER
+     ZIP UPLOAD — supports multiple files, accumulates sessions
      ═══════════════════════════════════════════════════════════════ */
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [progress,     setProgress]     = useState('');
+
   const handleZipUpload = useCallback(async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setZipFileName(file.name);
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
     setIsProcessing(true);
-    setZipProgress('Đang đọc file zip...');
 
+    const newSessions = [];
+
+    for (const file of files) {
+      setProgress(`Đang đọc: ${file.name}...`);
+      try {
+        // KEY FIX: read into ArrayBuffer first to avoid stale-reference errors
+        const arrayBuffer = await file.arrayBuffer();
+        const zip = await JSZip.loadAsync(arrayBuffer);
+
+        const imagePaths = Object.keys(zip.files).filter(fp =>
+          !zip.files[fp].dir && /\.(jpg|jpeg|png|webp)$/i.test(fp)
+        );
+
+        setProgress(`${file.name}: phân tích ${imagePaths.length} ảnh...`);
+
+        const storeMap = {}; // key: "date||storeCode"
+        let detectedProject = '';
+
+        for (let idx = 0; idx < imagePaths.length; idx++) {
+          if (idx % 20 === 0) setProgress(`${file.name}: ${idx+1}/${imagePaths.length} ảnh...`);
+
+          const fp    = imagePaths[idx];
+          const parts = fp.split(/[/\\]/);
+          const fileName = parts[parts.length - 1];
+
+          let datePart  = '';
+          let shopPart  = '';
+          let projLabel = '';
+          let projFound = false;
+
+          for (let pi = 0; pi < parts.length - 1; pi++) {
+            const p = parts[pi];
+            if (!projFound) {
+              const pj = detectProjFolder(p);
+              if (pj) { projLabel = pj; projFound = true; continue; }
+            }
+            if (/^\d{8}$/.test(p)) {
+              datePart = `${p.slice(0,4)}-${p.slice(4,6)}-${p.slice(6,8)}`;
+              continue;
+            }
+            if (p.includes('_') && !/^\d{8}$/.test(p)) shopPart = p;
+          }
+          // Fallback shop folder
+          if (!shopPart && parts.length >= 2) {
+            const parent = parts[parts.length - 2];
+            if (!/^\d{8}$/.test(parent) && !detectProjFolder(parent)) shopPart = parent;
+          }
+          if (!datePart) continue;
+          if (projLabel) detectedProject = projLabel;
+
+          // Parse store code + name from "CODE_Name With Spaces"
+          let storeCode = shopPart;
+          let storeName = shopPart;
+          if (shopPart.includes('_')) {
+            const ux = shopPart.indexOf('_');
+            storeCode = shopPart.slice(0, ux);
+            storeName = shopPart.slice(ux + 1).replace(/_/g, ' ');
+          }
+
+          const fnLow = fileName.toLowerCase();
+          const isCO  = /^co[_\-]|[_\-]co[_\-\.]/.test(fnLow);
+          // Everything else is CI (default)
+
+          const blob   = await zip.files[fp].async('blob');
+          const imgUrl = URL.createObjectURL(blob);
+
+          const key = `${datePart}||${storeCode}`;
+          if (!storeMap[key]) {
+            storeMap[key] = {
+              key, date: datePart, storeCode, storeName,
+              projLabel: projLabel || detectedProject,
+              ciPhotos: [], coPhotos: [],
+              ciBlobs:  [], coBlobs:  [],  // keep blobs for OCR later
+              ciTime: null, coTime: null,
+            };
+          }
+          const rec = storeMap[key];
+          if (isCO) {
+            rec.coPhotos.push(imgUrl);
+            rec.coBlobs.push(blob);
+          } else {
+            rec.ciPhotos.push(imgUrl);
+            rec.ciBlobs.push(blob);
+          }
+        }
+
+        const allDates = [...new Set(Object.values(storeMap).map(r => r.date))].sort();
+        newSessions.push({
+          id:         `${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
+          fileName:   file.name,
+          project:    detectedProject || file.name.split('_')[0],
+          storeCount: Object.keys(storeMap).length,
+          imageCount: imagePaths.length,
+          dates:      allDates,
+          storeMap,
+        });
+
+      } catch (err) {
+        alert(`Lỗi đọc "${file.name}": ${err.message}`);
+      }
+    }
+
+    if (newSessions.length) {
+      setSessions(prev => [...prev, ...newSessions]);
+      // Auto-select date from first session
+      const firstDates = newSessions[0]?.dates;
+      if (firstDates?.length) setSelDate(firstDates[firstDates.length - 1]);
+    }
+
+    setIsProcessing(false);
+    setProgress('');
+    // Reset file input so same file can be re-uploaded
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }, []);
+
+  /* Remove one session */
+  const removeSession = useCallback((id) => {
+    setSessions(prev => prev.filter(s => s.id !== id));
+    setSelectedRow(null);
+  }, []);
+
+  /* Merged zip lookup: "date||storeCode" → record */
+  const mergedZipMap = useMemo(() => {
+    const m = new Map();
+    for (const sess of sessions) {
+      for (const [k, v] of Object.entries(sess.storeMap)) {
+        if (!m.has(k)) m.set(k, v);
+        else {
+          // Merge photos
+          const ex = m.get(k);
+          ex.ciPhotos = [...ex.ciPhotos, ...v.ciPhotos];
+          ex.coPhotos = [...ex.coPhotos, ...v.coPhotos];
+          ex.ciBlobs  = [...ex.ciBlobs,  ...v.ciBlobs];
+          ex.coBlobs  = [...ex.coBlobs,  ...v.coBlobs];
+        }
+      }
+    }
+    return m;
+  }, [sessions]);
+
+  /* ═══════════════════════════════════════════════════════════════
+     OCR: run when user selects a row (lazy, on demand)
+     ═══════════════════════════════════════════════════════════════ */
+  const triggerOCR = useCallback(async (rowId, ciBlobs, coBlobs) => {
+    setOcrState(prev => ({ ...prev, [rowId]: 'scanning' }));
     try {
-      // FIX: read entire file into memory first to avoid "permission" errors
-      const arrayBuffer = await file.arrayBuffer();
-      const zip = await JSZip.loadAsync(arrayBuffer);
-
-      const imagePaths = Object.keys(zip.files).filter(fp =>
-        !zip.files[fp].dir && /\.(jpg|jpeg|png|webp)$/i.test(fp)
-      );
-
-      setZipProgress(`Phân tích ${imagePaths.length} ảnh...`);
-
-      // storeMap key: "YYYY-MM-DD||storeCode"
-      const storeMap = {};
-      let detectedProject = '';
-      let totalImages = 0;
-
-      for (let idx = 0; idx < imagePaths.length; idx++) {
-        if (idx % 20 === 0) {
-          setZipProgress(`Đang xử lý ảnh ${idx + 1} / ${imagePaths.length}...`);
-        }
-
-        const filePath = imagePaths[idx];
-        const parts    = filePath.split(/[/\\]/);
-        const fileName = parts[parts.length - 1];
-
-        let datePart  = '';
-        let shopPart  = '';
-        let projLabel = '';
-        let projFound = false;
-
-        for (let pi = 0; pi < parts.length - 1; pi++) {  // skip filename (last part)
-          const p = parts[pi];
-
-          // Project folder: PREFIX_YYYYMMDD[_YYYYMMDD]
-          if (!projFound) {
-            const pj = detectProjFolder(p);
-            if (pj) { projLabel = pj; projFound = true; continue; }
-          }
-
-          // Date folder: exactly 8 digits
-          if (/^\d{8}$/.test(p)) {
-            datePart = `${p.slice(0,4)}-${p.slice(4,6)}-${p.slice(6,8)}`;
-            continue;
-          }
-
-          // Shop folder: contains '_', not a date, not a project folder
-          if (p.includes('_') && !/^\d{8}$/.test(p)) {
-            shopPart = p;
-          }
-        }
-
-        // Fallback: second-to-last folder is shop
-        if (!shopPart && parts.length >= 2) {
-          const candidate = parts[parts.length - 2];
-          if (!/^\d{8}$/.test(candidate) && !detectProjFolder(candidate)) {
-            shopPart = candidate;
-          }
-        }
-
-        if (!datePart) continue;
-        if (projLabel) detectedProject = projLabel;
-
-        // Parse store code & name from shopPart "CODE_Name With Spaces"
-        let storeCode = shopPart;
-        let storeName = shopPart;
-        if (shopPart.includes('_')) {
-          const idx_ = shopPart.indexOf('_');
-          storeCode = shopPart.slice(0, idx_);
-          storeName = shopPart.slice(idx_ + 1).replace(/_/g, ' ');
-        }
-
-        const isCI = /^ci[_\-\s]?/i.test(fileName) || /[_\-]ci[_\-\s\.]/i.test(fileName);
-        const isCO = /^co[_\-\s]?/i.test(fileName) || /[_\-]co[_\-\s\.]/i.test(fileName);
-
-        const blob   = await zip.files[filePath].async('blob');
-        const imgUrl = URL.createObjectURL(blob);
-        totalImages++;
-
-        // Extract time: EXIF first, then filename
-        let imageTime = await readExifTime(blob);
-        if (!imageTime) imageTime = timeFromFilename(fileName);
-
-        const key = `${datePart}||${storeCode}`;
-        if (!storeMap[key]) {
-          storeMap[key] = {
-            key,
-            date: datePart,
-            storeCode,
-            storeName,
-            projLabel,
-            ciPhotos: [],
-            coPhotos: [],
-            ciTime: null,
-            coTime: null,
-          };
-        }
-        const rec = storeMap[key];
-
-        if (isCO) {
-          rec.coPhotos.push(imgUrl);
-          if (!rec.coTime && imageTime) rec.coTime = imageTime;
-        } else {
-          // Default or explicit CI
-          rec.ciPhotos.push(imgUrl);
-          if (!rec.ciTime && imageTime) rec.ciTime = imageTime;
-        }
-      }
-
-      const parsedList = Object.values(storeMap);
-      if (parsedList.length > 0) {
-        setUffZipData(parsedList);
-        const allDates = [...new Set(parsedList.map(r => r.date))].sort();
-        setZipStats({ totalImages, totalStores: parsedList.length, dates: allDates, project: detectedProject });
-        if (detectedProject && detectedProject !== 'Tất cả') setSelProject(detectedProject);
-        // Auto-select first date in zip
-        if (allDates.length > 0) setSelDate(allDates[allDates.length - 1]);
-      } else {
-        alert('Không tìm thấy ảnh hợp lệ trong zip.\nCấu trúc cần: DuAn_YYYYMMDD_YYYYMMDD / YYYYMMDD / CodeStore_TenStore / CI_xxx.jpg');
-      }
-    } catch (err) {
-      console.error('Zip error:', err);
-      alert('Lỗi đọc file zip: ' + err.message);
-    } finally {
-      setIsProcessing(false);
-      setZipProgress('');
+      const ciTime = ciBlobs.length ? await ocrTimeFromBlob(ciBlobs[0]) : null;
+      const coTime = coBlobs.length ? await ocrTimeFromBlob(coBlobs[0]) : null;
+      setOcrState(prev => ({ ...prev, [rowId]: { ciTime: ciTime || '—', coTime: coTime || '—' } }));
+    } catch {
+      setOcrState(prev => ({ ...prev, [rowId]: { ciTime: '—', coTime: '—' } }));
     }
   }, []);
 
-  /* ── API Test ── */
-  const handleTestAPI = async () => {
-    setApiStatus('connecting');
-    setApiMsg('Đang kiểm tra kết nối UFF API...');
-    try {
-      const res = await fetch(`${UFF_BASE_URL}api/Auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userName: UFF_USER, password: '12345678', deviceToken: 'web-dashboard' }),
-      });
-      if (res.ok) {
-        const j = await res.json();
-        setApiStatus('connected');
-        setApiMsg(`✅ Kết nối thành công! Token: ${j.token ? j.token.slice(0,20)+'…' : 'OK'}`);
-      } else {
-        setApiStatus('error');
-        setApiMsg(`⚠️ Server trả về HTTP ${res.status}. Dùng phương thức tải file Zip thủ công.`);
-      }
-    } catch (err) {
-      setApiStatus('error');
-      setApiMsg(`⚠️ Lỗi CORS/Network.\nHãy xuất file Zip từ web UFF và upload lên đây.`);
-    }
-  };
-
   /* ═══════════════════════════════════════════════════════════════
-     SCHEDULE DATA FOR SELECTED DATE
+     SCHEDULE DATA
      ═══════════════════════════════════════════════════════════════ */
-  const scheduleForDate = useMemo(() => {
-    if (!masterData.length) return [];
-    return masterData
-      .map(m => {
-        const isoDate = parseVNDateISO(m['Date'] || m['Ngày'] || '');
-        if (!isoDate) return null;
-        return {
-          isoDate,
-          storeCode:   (m['Store Code'] || m['Mart Code'] || '').trim(),
-          storeName:   (m['Store Name'] || m['Mart Name'] || '').trim(),
-          project:     (m['Project'] || '').trim(),
-          brand:       (m['Brand'] || '').trim(),
-          workingTime: (m['Working Time'] || '').trim(),
-          sup:         (m['Sup'] || m['Supervisor'] || '').trim(),
-          region:      (m['Region'] || '').trim(),
-        };
-      })
-      .filter(Boolean);
+  const scheduleRows = useMemo(() => {
+    return masterData.map(m => {
+      const isoDate = parseVNDate(m['Date'] || m['Ngày'] || '');
+      if (!isoDate) return null;
+      return {
+        isoDate,
+        storeCode:   (m['Store Code'] || m['Mart Code'] || '').trim(),
+        storeName:   (m['Store Name'] || m['Mart Name'] || '').trim(),
+        project:     (m['Project'] || '').trim(),
+        brand:       (m['Brand'] || '').trim(),
+        workingTime: (m['Working Time'] || '').trim(),
+        sup:         (m['Sup'] || m['Supervisor'] || '').trim(),
+        region:      (m['Region'] || '').trim(),
+      };
+    }).filter(Boolean);
   }, [masterData]);
 
-  /** All dates that appear in master schedule */
   const allScheduleDates = useMemo(() => {
-    const s = new Set(scheduleForDate.map(r => r.isoDate));
+    const s = new Set(scheduleRows.map(r => r.isoDate));
     const arr = [...s].sort();
     return arr.length ? arr : [todayISO()];
-  }, [scheduleForDate]);
+  }, [scheduleRows]);
 
-  /** Projects active on selected date */
   const projectsOnDate = useMemo(() => {
     const projs = [...new Set(
-      scheduleForDate
-        .filter(r => r.isoDate === selDate)
-        .map(r => r.project)
-        .filter(Boolean)
+      scheduleRows.filter(r => r.isoDate === selDate).map(r => r.project).filter(Boolean)
     )].sort();
     return ['Tất cả', ...projs];
-  }, [scheduleForDate, selDate]);
+  }, [scheduleRows, selDate]);
 
   /* ═══════════════════════════════════════════════════════════════
-     BUILD ZIP LOOKUP (storeCode → zip record)
-     ═══════════════════════════════════════════════════════════════ */
-  const zipLookup = useMemo(() => {
-    if (!uffZipData) return new Map();
-    const m = new Map();
-    for (const z of uffZipData) {
-      // key by date+storeCode (exact)
-      m.set(`${z.date}||${z.storeCode.toUpperCase()}`, z);
-      // also key by date+normStoreName for fuzzy
-      m.set(`${z.date}||NAME||${normStr(z.storeName)}`, z);
-    }
-    return m;
-  }, [uffZipData]);
-
-  /** Fuzzy find zip record for a schedule row */
-  const findZipRecord = useCallback((sched) => {
-    if (!uffZipData) return null;
-    // 1. Exact storeCode match
-    let rec = zipLookup.get(`${sched.isoDate}||${sched.storeCode.toUpperCase()}`);
-    if (rec) return rec;
-    // 2. Fuzzy store name match
-    const normSched = normStr(sched.storeName);
-    rec = zipLookup.get(`${sched.isoDate}||NAME||${normSched}`);
-    if (rec) return rec;
-    // 3. Partial name match
-    for (const z of (uffZipData || [])) {
-      if (z.date !== sched.isoDate) continue;
-      const zNorm = normStr(z.storeName);
-      const scNorm = normStr(sched.storeCode);
-      if (zNorm.includes(normSched) || normSched.includes(zNorm) ||
-          z.storeCode.toUpperCase() === sched.storeCode.toUpperCase() ||
-          scNorm === normStr(z.storeCode)) {
-        return z;
-      }
-    }
-    return null;
-  }, [uffZipData, zipLookup]);
-
-  /* ═══════════════════════════════════════════════════════════════
-     BUILD DISPLAY ROWS — primary source is SCHEDULE
+     BUILD DISPLAY ROWS — schedule is primary, zip adds evidence
      ═══════════════════════════════════════════════════════════════ */
   const displayRows = useMemo(() => {
-    const dateRows = scheduleForDate.filter(r => r.isoDate === selDate);
-    if (!dateRows.length) return [];
+    const dateRows = scheduleRows.filter(r => r.isoDate === selDate);
 
     const rows = dateRows.map((sched, i) => {
-      const zip = findZipRecord(sched);
-      const ciTime  = zip?.ciTime || null;
-      const coTime  = zip?.coTime || null;
-      const status  = zip ? calcStatus(ciTime, sched.workingTime) : 'Chưa CI';
+      // Find zip record: try storeCode exact match, then fuzzy name
+      let zip = mergedZipMap.get(`${sched.isoDate}||${sched.storeCode}`);
+      if (!zip) {
+        // Try case-insensitive code
+        for (const [k, v] of mergedZipMap.entries()) {
+          if (!k.startsWith(sched.isoDate + '||')) continue;
+          if (v.storeCode.toUpperCase() === sched.storeCode.toUpperCase()) { zip = v; break; }
+          const zn = normStr(v.storeName), sn = normStr(sched.storeName);
+          if (sn && zn && (sn.includes(zn) || zn.includes(sn))) { zip = v; break; }
+        }
+      }
 
-      // Store code/name: prefer zip folder info (more accurate UFF code)
-      const displayCode = zip?.storeCode || sched.storeCode;
-      const displayName = zip?.storeName || sched.storeName;
+      const rowId  = `${sched.isoDate}_${sched.storeCode}_${i}`;
+      const ocr    = ocrState[rowId];
+      const ciTime = (ocr && ocr !== 'scanning') ? ocr.ciTime : (zip ? '—' : null);
+      const coTime = (ocr && ocr !== 'scanning') ? ocr.coTime : (zip ? '—' : null);
+      const status = zip
+        ? (ocr && ocr !== 'scanning' ? calcStatus(ocr.ciTime, sched.workingTime) : 'Đúng giờ')  // optimistic until OCR
+        : 'Chưa CI';
 
       return {
-        id: `${sched.isoDate}_${sched.storeCode}_${i}`,
+        id:          rowId,
         date:        sched.isoDate,
         project:     sched.project,
         brand:       sched.brand,
-        storeCode:   displayCode,
-        storeName:   displayName,
+        storeCode:   zip?.storeCode || sched.storeCode,
+        storeName:   zip?.storeName || sched.storeName,
         workingTime: sched.workingTime,
         sup:         sched.sup,
         region:      sched.region,
@@ -417,103 +404,117 @@ export default function ReportView({ refreshKey }) {
         coPhotos:    zip?.coPhotos || [],
         ciPhoto:     zip?.ciPhotos?.[0] || null,
         coPhoto:     zip?.coPhotos?.[0] || null,
+        ciBlobs:     zip?.ciBlobs || [],
+        coBlobs:     zip?.coBlobs || [],
         hasZip:      !!zip,
+        ocrDone:     !!(ocr && ocr !== 'scanning'),
+        ocrScanning: ocr === 'scanning',
       };
     });
 
-    // Apply filters
     let filtered = rows;
-    if (selProject && selProject !== 'Tất cả') {
+    if (selProject && selProject !== 'Tất cả')
       filtered = filtered.filter(r => r.project === selProject || r.brand === selProject);
-    }
-    if (selStatus) {
+    if (selStatus)
       filtered = filtered.filter(r => r.status === selStatus);
-    }
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       filtered = filtered.filter(r =>
-        normStr(r.storeName).includes(q) ||
-        normStr(r.storeCode).includes(q) ||
-        normStr(r.sup).includes(q) ||
-        normStr(r.project).includes(q)
+        normStr(r.storeName).includes(q) || normStr(r.storeCode).includes(q) ||
+        normStr(r.sup).includes(q) || normStr(r.project).includes(q)
       );
     }
 
-    // Sort within each project: Chưa CI → Đi trễ → Đúng giờ
     const ord = { 'Chưa CI': 0, 'Đi trễ': 1, 'Đúng giờ': 2 };
-    filtered.sort((a, b) =>
-      a.project.localeCompare(b.project) ||
-      (ord[a.status] ?? 9) - (ord[b.status] ?? 9)
+    filtered.sort((a,b) =>
+      a.project.localeCompare(b.project) || (ord[a.status]??9)-(ord[b.status]??9)
     );
     return filtered;
-  }, [scheduleForDate, selDate, selProject, selStatus, search, findZipRecord]);
+  }, [scheduleRows, mergedZipMap, selDate, selProject, selStatus, search, ocrState]);
 
-  /** Group display rows by (project, brand) */
   const groupedRows = useMemo(() => {
-    const groups = new Map();
-    for (const row of displayRows) {
-      const key = `${row.project}||${row.brand}`;
-      if (!groups.has(key)) groups.set(key, { project: row.project, brand: row.brand, rows: [] });
-      groups.get(key).rows.push(row);
+    const m = new Map();
+    for (const r of displayRows) {
+      const k = `${r.project}||${r.brand}`;
+      if (!m.has(k)) m.set(k, { project: r.project, brand: r.brand, rows: [] });
+      m.get(k).rows.push(r);
     }
-    return [...groups.values()];
+    return [...m.values()];
   }, [displayRows]);
 
   /* ── KPIs ── */
-  const totalScheduled = scheduleForDate.filter(r => r.isoDate === selDate).length;
+  const totalScheduled = scheduleRows.filter(r => r.isoDate === selDate).length;
   const onTimeCount    = displayRows.filter(r => r.status === 'Đúng giờ').length;
   const lateCount      = displayRows.filter(r => r.status === 'Đi trễ').length;
   const missingCount   = displayRows.filter(r => r.status === 'Chưa CI').length;
 
-  /* ═══════════════════════════════════════════════════════════════
-     PDF EXPORT (grouped by project)
-     ═══════════════════════════════════════════════════════════════ */
-  const projectRefs = useRef({});
-  const modalRef    = useRef();
+  /* ── Handle row click → auto-trigger OCR ── */
+  const handleRowClick = useCallback((row) => {
+    setSelectedRow(prev => prev?.id === row.id ? null : row);
+    if (row.hasZip && !row.ocrDone && !row.ocrScanning) {
+      triggerOCR(row.id, row.ciBlobs, row.coBlobs);
+    }
+  }, [triggerOCR]);
 
+  /* ── PDF Export ── */
   const exportAllPDF = async () => {
-    const pdf = new jsPDF('l', 'mm', 'a3');
+    const pdf = new jsPDF('l','mm','a3');
     let first = true;
     for (const grp of groupedRows) {
       const el = projectRefs.current[`${grp.project}||${grp.brand}`];
       if (!el) continue;
       const canvas = await html2canvas(el, { scale: 2, useCORS: true });
-      const img = canvas.toDataURL('image/png');
       if (!first) pdf.addPage();
       const w = pdf.internal.pageSize.getWidth();
-      pdf.addImage(img, 'PNG', 0, 0, w, (canvas.height * w) / canvas.width);
+      pdf.addImage(canvas.toDataURL('image/png'),'PNG',0,0,w,(canvas.height*w)/canvas.width);
       first = false;
     }
     pdf.save(`BaoCao_UFF_${selDate}.pdf`);
   };
 
   const exportStorePDF = async () => {
-    if (!selectedRow) return alert('Vui lòng chọn một dòng store trước.');
-    const el = modalRef.current;
-    if (!el) return;
-    const canvas = await html2canvas(el, { scale: 2, useCORS: true });
-    const img = canvas.toDataURL('image/png');
-    const pdf = new jsPDF('p', 'mm', 'a4');
+    if (!selectedRow) return alert('Chọn một dòng store trước.');
+    if (!modalRef.current) return;
+    const canvas = await html2canvas(modalRef.current, { scale: 2, useCORS: true });
+    const pdf = new jsPDF('p','mm','a4');
     const w = pdf.internal.pageSize.getWidth();
-    pdf.addImage(img, 'PNG', 0, 0, w, (canvas.height * w) / canvas.width);
-    pdf.save(`BaoCao_${selectedRow.storeCode}_${selectedRow.date}.pdf`);
+    pdf.addImage(canvas.toDataURL('image/png'),'PNG',0,0,w,(canvas.height*w)/canvas.width);
+    pdf.save(`Store_${selectedRow.storeCode}_${selectedRow.date}.pdf`);
   };
 
-  const clearZip = () => {
-    setUffZipData(null);
-    setZipStats(null);
-    setZipFileName('');
-    setSelectedRow(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+  /* ── API Test ── */
+  const handleTestAPI = async () => {
+    setApiStatus('connecting');
+    setApiMsg('Đang kiểm tra kết nối...');
+    try {
+      const res = await fetch(`${UFF_BASE}api/Auth/login`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ userName:UFF_USER, password:'12345678', deviceToken:'web-dashboard' }),
+      });
+      if (res.ok) {
+        const j = await res.json();
+        setApiStatus('connected');
+        setApiMsg(`✅ Kết nối thành công! ${j.token ? 'Token OK' : ''}`);
+      } else {
+        setApiStatus('error');
+        setApiMsg(`⚠️ HTTP ${res.status}. Dùng phương thức upload Zip thủ công.`);
+      }
+    } catch (err) {
+      setApiStatus('error');
+      setApiMsg(`⚠️ CORS/Network error. Hãy xuất Zip từ web UFF rồi upload lên đây.`);
+    }
   };
 
   /* ═══════════════════════════════════════════════════════════════
      RENDER
      ═══════════════════════════════════════════════════════════════ */
+  const totalZipSessions = sessions.length;
+  const totalZipStores   = sessions.reduce((s, sess) => s + sess.storeCount, 0);
+
   return (
     <div className="space-y-5">
 
-      {/* ── TITLE BAR ── */}
+      {/* ── TITLE ── */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
         <div>
           <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2.5">
@@ -523,7 +524,7 @@ export default function ReportView({ refreshKey }) {
             Báo cáo UFF — Đối Soát Check-In BA
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Upload file Zip ảnh CI/CO từ web UFF → đối soát tự động với Lịch Master Google Sheet → phát hiện đi trễ / chưa CI.
+            Upload file Zip ảnh CI/CO theo từng dự án → hệ thống đọc giờ từ chữ trên ảnh (OCR) → đối soát với Lịch Master.
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -538,153 +539,182 @@ export default function ReportView({ refreshKey }) {
         </div>
       </div>
 
-      {/* ── UPLOAD + API ROW ── */}
+      {/* ── UPLOAD ZONE ── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
-        {/* Left: Zip Upload */}
-        <div className="lg:col-span-2 bg-gradient-to-br from-teal-900 to-slate-900 text-white p-5 rounded-2xl shadow-lg border border-teal-800/30">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2 text-teal-300 font-bold text-sm uppercase tracking-wider">
-                <i className="fa-solid fa-file-zipper" /> Tải File Zip Ảnh UFF
-              </div>
-              {zipFileName && (
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-teal-300 font-mono bg-teal-800/40 px-2.5 py-1 rounded-full border border-teal-600/30 truncate max-w-[200px]">
-                    📁 {zipFileName}
-                  </span>
-                  <button onClick={clearZip}
-                    className="text-[10px] bg-rose-500/30 hover:bg-rose-500/50 text-rose-200 px-2 py-0.5 rounded-full border border-rose-400/30 cursor-pointer transition-colors">
-                    ✕ Xóa
-                  </button>
-                </div>
+        {/* LEFT: Zip Upload Panel */}
+        <div className="lg:col-span-2 bg-gradient-to-br from-teal-900 to-slate-900 text-white p-5 rounded-2xl shadow-lg border border-teal-800/30 space-y-4">
+          
+          {/* Header */}
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2 text-teal-300 font-bold text-sm uppercase tracking-wider">
+              <i className="fa-solid fa-file-zipper" /> Tải File Zip Ảnh UFF
+            </div>
+            <div className="flex items-center gap-2 text-[11px] text-slate-400">
+              {totalZipSessions > 0 && (
+                <span className="bg-teal-500/20 border border-teal-500/30 text-teal-300 px-2.5 py-1 rounded-full font-bold">
+                  {totalZipSessions} dự án · {totalZipStores} store
+                </span>
               )}
             </div>
+          </div>
 
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Vào web UFF → chọn <strong className="text-teal-200">Dự án</strong> → <strong className="text-teal-200">Xuất dữ liệu → Tải ảnh/tệp</strong> → upload Zip vào đây.
-              <br/>Cấu trúc: <code className="text-teal-300 text-[10px]">PnG_20260720_20260726 / 20260720 / BHX001_BHX Dang Van Bi / CI_xxx.jpg</code>
-            </p>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            Mỗi dự án xuất <strong className="text-teal-200">một file Zip riêng</strong> từ web UFF → upload từng file. Hệ thống tự tích lũy dữ liệu.
+            <br/>Cấu trúc: <code className="text-teal-300 text-[10px]">PnG_20260720_20260726 / 20260720 / BHX001_BHX Dang Van Bi / CI_xxx.jpg</code>
+          </p>
 
-            {/* Drop zone */}
-            <label className={`border-2 border-dashed ${isProcessing ? 'border-teal-400' : 'border-teal-600/40 hover:border-teal-400'} bg-teal-950/30 hover:bg-teal-900/30 rounded-xl p-5 flex flex-col items-center justify-center cursor-pointer transition-all`}>
-              <input ref={fileInputRef} type="file" accept=".zip" onChange={handleZipUpload} disabled={isProcessing} className="hidden" />
-              {isProcessing ? (
-                <div className="flex flex-col items-center gap-2 py-1">
-                  <i className="fa-solid fa-circle-notch animate-spin text-teal-400 text-2xl" />
-                  <span className="text-teal-200 text-xs font-bold">{zipProgress}</span>
-                </div>
-              ) : (
-                <div className="text-center py-1">
-                  <i className="fa-solid fa-cloud-arrow-up text-3xl text-teal-400 mb-2" />
-                  <div className="text-xs font-bold text-slate-200">Nhấn chọn hoặc kéo thả file Zip</div>
-                  <div className="text-[10px] text-slate-500 mt-0.5">Giờ CI/CO tự động đọc từ EXIF ảnh</div>
-                </div>
-              )}
-            </label>
-
-            {/* Zip stats after upload */}
-            {zipStats && (
-              <div className="grid grid-cols-4 gap-2">
-                {[
-                  { icon: 'fa-images',   label: 'Ảnh',      value: zipStats.totalImages },
-                  { icon: 'fa-store',    label: 'Cửa hàng', value: zipStats.totalStores },
-                  { icon: 'fa-calendar', label: 'Ngày',     value: zipStats.dates.length },
-                  { icon: 'fa-tag',      label: 'Dự án',    value: zipStats.project || '—' },
-                ].map(({ icon, label, value }) => (
-                  <div key={label} className="bg-teal-800/40 border border-teal-700/30 rounded-xl px-3 py-2 text-center">
-                    <div className="text-[10px] text-teal-400 font-bold uppercase tracking-wide mb-0.5">
-                      <i className={`fa-solid ${icon} mr-1`} />{label}
-                    </div>
-                    <div className="text-lg font-extrabold text-teal-100">{value}</div>
-                  </div>
-                ))}
+          {/* Drop zone */}
+          <label className={`border-2 border-dashed ${isProcessing ? 'border-teal-400 bg-teal-950/50' : 'border-teal-600/40 hover:border-teal-400 bg-teal-950/20 hover:bg-teal-950/40'} rounded-xl p-5 flex flex-col items-center justify-center cursor-pointer transition-all`}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".zip"
+              multiple
+              onChange={handleZipUpload}
+              disabled={isProcessing}
+              className="hidden"
+            />
+            {isProcessing ? (
+              <div className="flex flex-col items-center gap-2 py-1">
+                <i className="fa-solid fa-circle-notch animate-spin text-teal-400 text-2xl" />
+                <span className="text-teal-200 text-xs font-bold">{progress}</span>
+              </div>
+            ) : (
+              <div className="text-center py-1">
+                <i className="fa-solid fa-cloud-arrow-up text-3xl text-teal-400 mb-2" />
+                <div className="text-xs font-bold text-slate-200">Nhấn để chọn hoặc kéo thả file Zip vào đây</div>
+                <div className="text-[10px] text-slate-500 mt-0.5">Có thể chọn nhiều file cùng lúc · Giờ CI/CO đọc từ chữ trên ảnh (OCR tự động)</div>
               </div>
             )}
-          </div>
+          </label>
+
+          {/* Loaded Sessions List */}
+          {sessions.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-[11px] text-teal-400 font-bold uppercase tracking-wider">📁 Đã Tải Lên:</div>
+              {sessions.map(sess => (
+                <div key={sess.id}
+                  className="flex items-center justify-between gap-3 bg-teal-800/30 border border-teal-700/30 rounded-xl px-4 py-2.5">
+                  <div className="flex items-center gap-3 min-w-0">
+                    {/* Project badge */}
+                    <span className="shrink-0 bg-teal-500/20 text-teal-300 border border-teal-500/30 text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wide">
+                      {sess.project}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-[11px] text-slate-200 font-bold truncate">{sess.fileName}</div>
+                      <div className="text-[10px] text-slate-500">
+                        {sess.storeCount} store · {sess.imageCount} ảnh · {sess.dates.length} ngày ({sess.dates[0]} → {sess.dates[sess.dates.length-1]})
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => removeSession(sess.id)}
+                    className="shrink-0 w-7 h-7 rounded-full bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 flex items-center justify-center cursor-pointer transition-colors text-xs"
+                    title="Xóa file này">
+                    <i className="fa-solid fa-xmark" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* Right: API Connector */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 text-slate-800 font-bold text-sm mb-3">
+        {/* RIGHT: API + OCR Info */}
+        <div className="flex flex-col gap-4">
+          {/* API Connector */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col gap-3">
+            <div className="flex items-center gap-2 text-slate-800 font-bold text-sm">
               <i className="fa-solid fa-server text-blue-600" /> Kết Nối UFF API
             </div>
             <div className="text-xs bg-slate-50 rounded-xl border border-slate-100 p-3 space-y-2">
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse shrink-0" />
-                <span className="text-slate-500 w-14 shrink-0">URL:</span>
-                <span className="font-mono text-[10px] text-blue-700 truncate">{UFF_BASE_URL}</span>
+                <span className="font-mono text-[10px] text-blue-700 truncate">{UFF_BASE}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                <span className="text-slate-500 w-14 shrink-0">User:</span>
                 <span className="font-mono text-[10px]">{UFF_USER}</span>
               </div>
             </div>
-          </div>
-          <div className="space-y-2">
-            <button onClick={handleTestAPI} disabled={apiStatus === 'connecting'}
+            <button onClick={handleTestAPI} disabled={apiStatus==='connecting'}
               className="w-full bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold py-2.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50">
-              <i className={`fa-solid ${apiStatus === 'connecting' ? 'fa-spinner animate-spin' : 'fa-plug'}`} />
-              {apiStatus === 'connecting' ? 'Đang kiểm tra...' : 'Test Kết Nối API'}
+              <i className={`fa-solid ${apiStatus==='connecting'?'fa-spinner animate-spin':'fa-plug'}`} />
+              {apiStatus==='connecting' ? 'Đang kiểm tra...' : 'Test Kết Nối'}
             </button>
             {apiMsg && (
-              <div className={`text-[11px] p-2.5 rounded-xl whitespace-pre-wrap leading-snug font-medium ${
-                apiStatus === 'connected' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+              <div className={`text-[11px] p-2.5 rounded-xl font-medium ${apiStatus==='connected'?'bg-emerald-50 text-emerald-700 border border-emerald-200':'bg-amber-50 text-amber-700 border border-amber-200'}`}>
                 {apiMsg}
               </div>
             )}
-            <p className="text-[10px] text-slate-400">
-              💡 Nếu bị CORS, xuất file Zip từ web UFF rồi upload lên trái.
+          </div>
+
+          {/* OCR Info box */}
+          <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 space-y-2">
+            <div className="flex items-center gap-2 text-indigo-800 font-bold text-xs">
+              <i className="fa-solid fa-eye text-indigo-600" /> Đọc Giờ Từ Ảnh (OCR)
+            </div>
+            <p className="text-[11px] text-indigo-700 leading-relaxed">
+              Hệ thống dùng <strong>Tesseract.js</strong> để đọc giờ CI/CO được ghi trên ảnh.
+              <br/>OCR tự động chạy khi bạn <strong>click chọn một dòng store</strong> để xem chi tiết — không làm chậm quá trình upload.
             </p>
+            <div className="text-[10px] text-indigo-500 bg-indigo-100 rounded-lg px-2.5 py-1.5">
+              💡 OCR quét phần dưới ảnh (vị trí chữ timestamp). Lần đầu tải Tesseract engine ~2MB.
+            </div>
           </div>
         </div>
       </div>
 
       {/* ── KPIs (4 boxes) ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiBox icon="fa-store"                label="Tổng Store Lịch Hôm Nay" value={totalScheduled} color="blue"    tooltip={`Tổng ${totalScheduled} store trong lịch ngày ${selDate}`} />
-        <KpiBox icon="fa-circle-check"         label="Check-In Đúng Giờ"       value={onTimeCount}    color="emerald" />
-        <KpiBox icon="fa-clock"                label="Check-In Đi Trễ"         value={lateCount}      color="amber"   />
-        <KpiBox icon="fa-triangle-exclamation" label="Chưa CI / Vắng Mặt"      value={missingCount}   color="rose"    />
+        {[
+          { icon:'fa-store',                label:'Tổng Store (Lịch Hôm Nay)', value:totalScheduled, color:'blue',    tooltip:`${totalScheduled} store có lịch làm ngày ${selDate}` },
+          { icon:'fa-circle-check',         label:'Check-In Đúng Giờ',         value:onTimeCount,    color:'emerald' },
+          { icon:'fa-clock',                label:'Check-In Đi Trễ',           value:lateCount,      color:'amber'   },
+          { icon:'fa-triangle-exclamation', label:'Chưa CI / Vắng Mặt',        value:missingCount,   color:'rose'    },
+        ].map(({ icon, label, value, color, tooltip }) => (
+          <div key={label} title={tooltip||''}
+            className={`border rounded-2xl p-4 shadow-xs ${{
+              blue:'bg-blue-50 border-blue-200 text-blue-800',
+              emerald:'bg-emerald-50 border-emerald-200 text-emerald-800',
+              amber:'bg-amber-50 border-amber-200 text-amber-800',
+              rose:'bg-rose-50 border-rose-200 text-rose-800',
+            }[color]}`}>
+            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider mb-1.5 opacity-70">
+              <i className={`fa-solid ${icon}`} /> {label}
+            </div>
+            <div className="text-2xl font-extrabold">{value}</div>
+          </div>
+        ))}
       </div>
 
       {/* ── FILTER BAR ── */}
       <div className="bg-white border border-slate-200 rounded-2xl px-4 py-3.5 shadow-xs flex flex-wrap gap-3 items-end">
-        {/* Search */}
         <div>
           <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">🔍 Tìm kiếm</label>
-          <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+          <input type="text" value={search} onChange={e=>setSearch(e.target.value)}
             placeholder="Store, SUP, dự án..."
             className="border border-slate-200 rounded-xl px-3 py-2 text-xs bg-slate-50 focus:bg-white text-slate-700 outline-none focus:ring-2 focus:ring-teal-200 focus:border-teal-400 w-48 font-medium" />
         </div>
-
-        {/* Project — dynamic from today's schedule */}
         <div>
           <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Dự Án</label>
-          <select value={selProject} onChange={e => setSelProject(e.target.value)}
+          <select value={selProject} onChange={e=>setSelProject(e.target.value)}
             className="border border-slate-200 rounded-xl px-3 py-2 text-xs bg-white text-slate-700 font-bold outline-none cursor-pointer">
-            {projectsOnDate.map(p => <option key={p} value={p}>{p}</option>)}
+            {projectsOnDate.map(p=><option key={p} value={p}>{p}</option>)}
           </select>
         </div>
-
-        {/* Date */}
         <div>
           <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Ngày</label>
-          <select value={selDate} onChange={e => setSelDate(e.target.value)}
+          <select value={selDate} onChange={e=>setSelDate(e.target.value)}
             className="border border-slate-200 rounded-xl px-3 py-2 text-xs bg-white text-slate-700 font-medium outline-none cursor-pointer">
-            {allScheduleDates.map(d => (
-              <option key={d} value={d}>{d}{d === todayISO() ? ' (Hôm nay)' : ''}</option>
+            {allScheduleDates.map(d=>(
+              <option key={d} value={d}>{d}{d===todayISO()?' (Hôm nay)':''}</option>
             ))}
           </select>
         </div>
-
-        {/* Status */}
         <div>
           <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Trạng Thái</label>
-          <select value={selStatus} onChange={e => setSelStatus(e.target.value)}
+          <select value={selStatus} onChange={e=>setSelStatus(e.target.value)}
             className="border border-slate-200 rounded-xl px-3 py-2 text-xs bg-white text-slate-700 font-medium outline-none cursor-pointer">
             <option value="">Tất cả</option>
             <option value="Đúng giờ">✅ Đúng giờ</option>
@@ -692,37 +722,29 @@ export default function ReportView({ refreshKey }) {
             <option value="Chưa CI">🔴 Chưa CI / Vắng</option>
           </select>
         </div>
-
-        <div className="ml-auto self-end text-xs pb-2">
-          {selectedRow ? (
-            <span className="text-teal-700 font-bold">✓ {selectedRow.storeName} ({selectedRow.date})</span>
-          ) : (
-            <span className="text-slate-400">{displayRows.length} dòng • Click dòng để xem ảnh</span>
-          )}
+        <div className="ml-auto self-end text-xs text-slate-400 pb-2">
+          {selectedRow
+            ? <span className="text-teal-700 font-bold">✓ {selectedRow.storeName}</span>
+            : <span>{displayRows.length} dòng · Click chọn store để xem ảnh + quét OCR giờ CI</span>}
         </div>
       </div>
 
       {/* ── TABLE GROUPED BY PROJECT ── */}
       {groupedRows.length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center text-slate-400 shadow-xs">
-          <i className="fa-solid fa-inbox text-4xl text-slate-200 mb-3" />
+          <i className="fa-solid fa-inbox text-4xl text-slate-200 mb-3 block" />
           <div className="font-bold text-sm">Không có dữ liệu cho ngày {selDate}.</div>
           <div className="text-xs mt-1">Kiểm tra lại Google Sheet hoặc chọn ngày khác.</div>
         </div>
       ) : (
         <div className="space-y-5">
           {groupedRows.map(grp => {
-            const grpKey = `${grp.project}||${grp.brand}`;
-            const grpOnTime  = grp.rows.filter(r => r.status === 'Đúng giờ').length;
-            const grpLate    = grp.rows.filter(r => r.status === 'Đi trễ').length;
-            const grpMissing = grp.rows.filter(r => r.status === 'Chưa CI').length;
-
+            const gk = `${grp.project}||${grp.brand}`;
+            const cnt = { on: grp.rows.filter(r=>r.status==='Đúng giờ').length, late: grp.rows.filter(r=>r.status==='Đi trễ').length, miss: grp.rows.filter(r=>r.status==='Chưa CI').length };
             return (
-              <div key={grpKey}
-                ref={el => { projectRefs.current[grpKey] = el; }}
+              <div key={gk} ref={el=>{ projectRefs.current[gk]=el; }}
                 className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden">
-
-                {/* Project section header */}
+                {/* Section header */}
                 <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-5 py-3 flex items-center justify-between flex-wrap gap-2">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center">
@@ -730,23 +752,22 @@ export default function ReportView({ refreshKey }) {
                     </div>
                     <div>
                       <div className="text-white font-extrabold text-sm">{grp.project}</div>
-                      <div className="text-slate-400 text-[11px] font-medium">Brand: {grp.brand}</div>
+                      <div className="text-slate-400 text-[11px]">Brand: {grp.brand}</div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 text-[11px] font-bold">
-                    <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-1 rounded-full">✅ {grpOnTime} đúng giờ</span>
-                    <span className="bg-amber-500/20  text-amber-300  border border-amber-500/30  px-2.5 py-1 rounded-full">⚠️ {grpLate} trễ</span>
-                    <span className="bg-rose-500/20   text-rose-300   border border-rose-500/30   px-2.5 py-1 rounded-full">🔴 {grpMissing} chưa CI</span>
+                  <div className="flex items-center gap-2 text-[11px] font-bold flex-wrap">
+                    <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-1 rounded-full">✅ {cnt.on}</span>
+                    <span className="bg-amber-500/20  text-amber-300  border border-amber-500/30  px-2.5 py-1 rounded-full">⚠️ {cnt.late}</span>
+                    <span className="bg-rose-500/20   text-rose-300   border border-rose-500/30   px-2.5 py-1 rounded-full">🔴 {cnt.miss}</span>
                     <span className="bg-white/10 text-slate-300 border border-white/20 px-2.5 py-1 rounded-full">{grp.rows.length} store</span>
                   </div>
                 </div>
-
                 {/* Table */}
                 <div className="overflow-x-auto">
                   <table className="w-full border-collapse text-xs min-w-[900px]">
                     <thead>
-                      <tr className="bg-slate-100 text-slate-600 text-left">
-                        {['Ngày','Store Code','Tên Store / Siêu Thị','Ca Làm (Lịch)','SUP','Ảnh CI','Giờ CI','Giờ CO','Trạng Thái'].map(h => (
+                      <tr className="bg-slate-50 text-slate-500 text-left">
+                        {['Ngày','Store Code','Tên Store / Siêu Thị','Ca Làm (Lịch)','SUP','Ảnh CI','Giờ CI','Giờ CO','Trạng Thái'].map(h=>(
                           <th key={h} className="px-3.5 py-2.5 text-[10px] font-bold uppercase tracking-wider whitespace-nowrap border-b border-slate-200">{h}</th>
                         ))}
                       </tr>
@@ -755,26 +776,25 @@ export default function ReportView({ refreshKey }) {
                       {grp.rows.map((r, i) => {
                         const isSel = selectedRow?.id === r.id;
                         return (
-                          <tr key={r.id}
-                            onClick={() => setSelectedRow(isSel ? null : r)}
+                          <tr key={r.id} onClick={()=>handleRowClick(r)}
                             className={`cursor-pointer transition-all ${
                               isSel ? 'bg-teal-50 ring-1 ring-inset ring-teal-400'
-                              : r.status === 'Chưa CI' ? 'bg-rose-50/40 hover:bg-rose-50'
-                              : r.status === 'Đi trễ'  ? 'bg-amber-50/40 hover:bg-amber-50'
-                              : i % 2 === 0 ? 'bg-white hover:bg-slate-50' : 'bg-slate-50/40 hover:bg-slate-50'
+                              : r.status==='Chưa CI' ? 'bg-rose-50/40 hover:bg-rose-50'
+                              : r.status==='Đi trễ'  ? 'bg-amber-50/40 hover:bg-amber-50'
+                              : i%2===0 ? 'bg-white hover:bg-slate-50' : 'bg-slate-50/30 hover:bg-slate-50'
                             }`}>
                             <td className="px-3.5 py-3 font-mono text-slate-500 text-[11px] whitespace-nowrap">{r.date}</td>
-                            <td className="px-3.5 py-3 font-mono text-[11px] font-bold text-slate-600">{r.storeCode}</td>
+                            <td className="px-3.5 py-3 font-mono font-bold text-slate-600 text-[11px]">{r.storeCode}</td>
                             <td className="px-3.5 py-3 font-bold text-slate-800 whitespace-nowrap">{r.storeName}</td>
-                            <td className="px-3.5 py-3 text-slate-600 whitespace-nowrap text-[11px]">{r.workingTime || '—'}</td>
-                            <td className="px-3.5 py-3 text-slate-600 whitespace-nowrap text-[11px]">{r.sup || '—'}</td>
+                            <td className="px-3.5 py-3 text-slate-600 whitespace-nowrap text-[11px]">{r.workingTime||'—'}</td>
+                            <td className="px-3.5 py-3 text-slate-600 whitespace-nowrap text-[11px]">{r.sup||'—'}</td>
                             <td className="px-3.5 py-3">
                               {r.ciPhoto ? (
                                 <div className="relative w-10 h-10"
-                                  onClick={e => { e.stopPropagation(); setPreviewImages(r.ciPhotos); setPreviewImage(r.ciPhoto); }}>
+                                  onClick={e=>{ e.stopPropagation(); setPreviewList(r.ciPhotos); setPreviewImage(r.ciPhoto); }}>
                                   <img src={r.ciPhoto} alt="CI"
                                     className="w-10 h-10 rounded-lg object-cover border-2 border-emerald-300 cursor-zoom-in hover:opacity-80 transition-all" />
-                                  {r.ciPhotos.length > 1 && (
+                                  {r.ciPhotos.length>1 && (
                                     <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-[8px] font-extrabold w-4 h-4 rounded-full flex items-center justify-center">
                                       {r.ciPhotos.length}
                                     </span>
@@ -786,17 +806,24 @@ export default function ReportView({ refreshKey }) {
                                 </div>
                               )}
                             </td>
+                            {/* CI Time — shows spinner while OCR running */}
                             <td className="px-3.5 py-3 font-mono font-bold text-[11px]">
-                              <span className={r.status === 'Đi trễ' ? 'text-amber-700' : r.status === 'Chưa CI' ? 'text-rose-500' : 'text-emerald-700'}>
-                                {r.ciTime}
-                              </span>
+                              {r.ocrScanning ? (
+                                <span className="flex items-center gap-1 text-indigo-500">
+                                  <i className="fa-solid fa-circle-notch animate-spin text-[10px]" /> quét...
+                                </span>
+                              ) : (
+                                <span className={r.status==='Đi trễ'?'text-amber-700':r.status==='Chưa CI'?'text-rose-500':'text-emerald-700'}>
+                                  {r.ciTime}
+                                </span>
+                              )}
                             </td>
-                            <td className="px-3.5 py-3 font-mono text-slate-500 text-[11px]">{r.coTime}</td>
+                            <td className="px-3.5 py-3 font-mono text-slate-500 text-[11px]">
+                              {r.ocrScanning ? <i className="fa-solid fa-circle-notch animate-spin text-[10px] text-indigo-400" /> : r.coTime}
+                            </td>
                             <td className="px-3.5 py-3 whitespace-nowrap">
-                              <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border ${STATUS_STYLE[r.status] || ''}`}>
-                                {r.status === 'Đúng giờ' ? '✅ Đúng giờ'
-                                 : r.status === 'Đi trễ' ? '⚠️ Đi trễ'
-                                 : '🔴 Chưa CI'}
+                              <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border ${STATUS_STYLE[r.status]||''}`}>
+                                {r.status==='Đúng giờ'?'✅ Đúng giờ':r.status==='Đi trễ'?'⚠️ Đi trễ':'🔴 Chưa CI'}
                               </span>
                             </td>
                           </tr>
@@ -823,110 +850,86 @@ export default function ReportView({ refreshKey }) {
                 {selectedRow.date} · {selectedRow.project} · Brand: {selectedRow.brand} · {selectedRow.storeCode}
               </p>
             </div>
-            <button onClick={() => setSelectedRow(null)}
-              className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center cursor-pointer transition-colors">
-              <i className="fa-solid fa-xmark text-sm" />
-            </button>
+            <div className="flex items-center gap-2">
+              {selectedRow.hasZip && !selectedRow.ocrDone && !selectedRow.ocrScanning && (
+                <button
+                  onClick={() => triggerOCR(selectedRow.id, selectedRow.ciBlobs, selectedRow.coBlobs)}
+                  className="text-[11px] bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-lg font-bold cursor-pointer transition-colors flex items-center gap-1.5">
+                  <i className="fa-solid fa-eye" /> Quét Giờ OCR
+                </button>
+              )}
+              {selectedRow.ocrScanning && (
+                <span className="text-[11px] bg-indigo-500/30 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+                  <i className="fa-solid fa-circle-notch animate-spin" /> Đang quét giờ...
+                </span>
+              )}
+              <button onClick={()=>setSelectedRow(null)}
+                className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center cursor-pointer transition-colors">
+                <i className="fa-solid fa-xmark text-sm" />
+              </button>
+            </div>
           </div>
 
           <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Info */}
-            <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 space-y-2">
-              <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 pb-2">Thông Tin Phân Công</h4>
+            <div className="bg-slate-50 rounded-xl border border-slate-200 p-4">
+              <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 pb-2 mb-3">Thông Tin Phân Công</h4>
               {[
                 ['Dự Án', selectedRow.project],
                 ['Brand', selectedRow.brand],
                 ['Ca Làm Việc', selectedRow.workingTime],
                 ['Supervisor', selectedRow.sup],
-                ['Giờ Check-In', selectedRow.ciTime],
-                ['Giờ Check-Out', selectedRow.coTime],
+                ['Giờ Check-In', selectedRow.ocrScanning ? '🔍 đang quét...' : selectedRow.ciTime],
+                ['Giờ Check-Out', selectedRow.ocrScanning ? '🔍 đang quét...' : selectedRow.coTime],
                 ['Số ảnh CI', selectedRow.ciPhotos.length],
                 ['Số ảnh CO', selectedRow.coPhotos.length],
-              ].map(([label, value]) => (
-                <div key={label} className="flex items-center justify-between text-xs py-1 border-b border-slate-100 last:border-0">
-                  <span className="text-slate-500 font-medium">{label}</span>
-                  <span className="text-slate-800 font-bold">{value}</span>
+              ].map(([lbl, val]) => (
+                <div key={lbl} className="flex items-center justify-between text-xs py-1.5 border-b border-slate-100 last:border-0">
+                  <span className="text-slate-500 font-medium">{lbl}</span>
+                  <span className={`font-bold ${lbl.includes('Giờ') && selectedRow.ocrScanning ? 'text-indigo-500 italic' : 'text-slate-800'}`}>{val}</span>
                 </div>
               ))}
-              <div className="flex items-center justify-between text-xs py-1">
+              <div className="flex items-center justify-between text-xs py-1.5 mt-1">
                 <span className="text-slate-500 font-medium">Trạng Thái</span>
-                <span className={`px-2.5 py-1 rounded-full text-[11px] font-extrabold border ${STATUS_STYLE[selectedRow.status]}`}>
-                  {selectedRow.status === 'Đúng giờ' ? '✅ Đúng giờ' : selectedRow.status === 'Đi trễ' ? '⚠️ Đi trễ' : '🔴 Chưa CI'}
+                <span className={`px-2.5 py-1 rounded-full text-[11px] font-extrabold border ${STATUS_STYLE[selectedRow.status]||''}`}>
+                  {selectedRow.status==='Đúng giờ'?'✅ Đúng giờ':selectedRow.status==='Đi trễ'?'⚠️ Đi trễ':'🔴 Chưa CI'}
                 </span>
               </div>
             </div>
 
             {/* Photos */}
             <div className="space-y-3">
-              <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 pb-2">Hình Ảnh Check-In / Check-Out</h4>
+              <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 pb-2">Hình Ảnh CI / CO</h4>
               <div className="grid grid-cols-2 gap-3">
-                {/* CI photos */}
-                <div>
-                  <div className="text-[11px] font-bold text-emerald-700 mb-1.5">📷 Check-In (CI)</div>
-                  {selectedRow.ciPhoto ? (
-                    <>
-                      <img src={selectedRow.ciPhoto} alt="CI"
-                        onClick={() => { setPreviewImages(selectedRow.ciPhotos); setPreviewImage(selectedRow.ciPhoto); }}
-                        className="w-full h-40 object-cover rounded-xl border-2 border-emerald-200 cursor-zoom-in hover:opacity-90 transition-all" />
-                      {selectedRow.ciPhotos.length > 1 && (
-                        <div className="flex gap-1 mt-1.5 overflow-x-auto">
-                          {selectedRow.ciPhotos.slice(1).map((p, i) => (
-                            <img key={i} src={p} alt={`CI ${i+2}`}
-                              onClick={() => { setPreviewImages(selectedRow.ciPhotos); setPreviewImage(p); }}
-                              className="w-12 h-12 rounded-lg object-cover border border-slate-200 cursor-zoom-in hover:opacity-80 flex-shrink-0" />
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <div className="h-40 bg-rose-50 rounded-xl flex flex-col items-center justify-center text-rose-400 text-xs border-2 border-dashed border-rose-300 gap-1">
-                      <i className="fa-solid fa-image text-xl" /><span className="font-bold">Chưa có ảnh CI</span>
-                    </div>
-                  )}
-                </div>
-                {/* CO photos */}
-                <div>
-                  <div className="text-[11px] font-bold text-blue-700 mb-1.5">📷 Check-Out (CO)</div>
-                  {selectedRow.coPhoto ? (
-                    <>
-                      <img src={selectedRow.coPhoto} alt="CO"
-                        onClick={() => { setPreviewImages(selectedRow.coPhotos); setPreviewImage(selectedRow.coPhoto); }}
-                        className="w-full h-40 object-cover rounded-xl border-2 border-blue-200 cursor-zoom-in hover:opacity-90 transition-all" />
-                    </>
-                  ) : (
-                    <div className="h-40 bg-slate-100 rounded-xl flex flex-col items-center justify-center text-slate-400 text-xs border-2 border-dashed border-slate-300 gap-1">
-                      <i className="fa-solid fa-image text-xl" /><span className="font-bold">Chưa có ảnh CO</span>
-                    </div>
-                  )}
-                </div>
+                <PhotoCol label="📷 Check-In (CI)" photos={selectedRow.ciPhotos} color="emerald"
+                  onZoom={(p)=>{ setPreviewList(selectedRow.ciPhotos); setPreviewImage(p); }} />
+                <PhotoCol label="📷 Check-Out (CO)" photos={selectedRow.coPhotos} color="blue"
+                  onZoom={(p)=>{ setPreviewList(selectedRow.coPhotos); setPreviewImage(p); }} />
               </div>
             </div>
           </div>
-
           <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 text-xs text-slate-400 flex items-center gap-2">
             <i className="fa-solid fa-shield-halved text-slate-300" />
-            Field Operation Dashboard · {new Date().toLocaleDateString('vi-VN')} · UFF Automated Report
+            Field Operation Dashboard · {new Date().toLocaleDateString('vi-VN')}
           </div>
         </div>
       )}
 
-      {/* ── IMAGE LIGHTBOX ── */}
+      {/* ── LIGHTBOX ── */}
       {previewImage && (
-        <div onClick={() => setPreviewImage(null)}
+        <div onClick={()=>setPreviewImage(null)}
           className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 cursor-zoom-out">
-          <div className="relative max-w-4xl w-full" onClick={e => e.stopPropagation()}>
-            <button onClick={() => setPreviewImage(null)}
+          <div className="relative max-w-4xl w-full" onClick={e=>e.stopPropagation()}>
+            <button onClick={()=>setPreviewImage(null)}
               className="absolute -top-4 -right-4 w-10 h-10 rounded-full bg-white/20 hover:bg-white/40 text-white flex items-center justify-center cursor-pointer transition-colors z-10 text-lg">
               <i className="fa-solid fa-xmark" />
             </button>
-            <img src={previewImage} alt="Preview" className="w-full max-h-[85vh] object-contain rounded-2xl" />
-            {/* Thumbnails row for multiple photos */}
-            {previewImages.length > 1 && (
+            <img src={previewImage} alt="Preview" className="w-full max-h-[82vh] object-contain rounded-2xl" />
+            {previewList.length > 1 && (
               <div className="flex gap-2 justify-center mt-3 overflow-x-auto pb-1">
-                {previewImages.map((p, i) => (
-                  <img key={i} src={p} alt={`img ${i+1}`}
-                    onClick={() => setPreviewImage(p)}
-                    className={`w-14 h-14 rounded-lg object-cover cursor-pointer transition-all border-2 shrink-0 ${p === previewImage ? 'border-teal-400 opacity-100' : 'border-white/20 opacity-60 hover:opacity-100'}`} />
+                {previewList.map((p,i) => (
+                  <img key={i} src={p} alt="" onClick={()=>setPreviewImage(p)}
+                    className={`w-14 h-14 rounded-lg object-cover cursor-pointer border-2 shrink-0 transition-all ${p===previewImage?'border-teal-400 opacity-100':'border-white/20 opacity-60 hover:opacity-100'}`} />
                 ))}
               </div>
             )}
@@ -937,20 +940,33 @@ export default function ReportView({ refreshKey }) {
   );
 }
 
-/* ─── Sub-components ─────────────────────────────────── */
-function KpiBox({ icon, label, value, color, tooltip }) {
-  const clr = {
-    blue:    'bg-blue-50 border-blue-200 text-blue-800',
-    emerald: 'bg-emerald-50 border-emerald-200 text-emerald-800',
-    amber:   'bg-amber-50 border-amber-200 text-amber-800',
-    rose:    'bg-rose-50 border-rose-200 text-rose-800',
-  }[color];
+/* ─── PhotoCol sub-component ───────────────────────── */
+function PhotoCol({ label, photos, color, onZoom }) {
+  const borderCls = color==='emerald' ? 'border-2 border-emerald-200' : 'border-2 border-blue-200';
+  const emptyBg   = color==='emerald' ? 'bg-rose-50 border-rose-300 text-rose-400' : 'bg-slate-100 border-slate-300 text-slate-400';
   return (
-    <div className={`border rounded-2xl p-4 shadow-xs ${clr}`} title={tooltip || ''}>
-      <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider mb-1.5 opacity-70">
-        <i className={`fa-solid ${icon}`} /> {label}
-      </div>
-      <div className="text-2xl font-extrabold">{value}</div>
+    <div>
+      <div className={`text-[11px] font-bold mb-1.5 ${color==='emerald'?'text-emerald-700':'text-blue-700'}`}>{label}</div>
+      {photos.length ? (
+        <>
+          <img src={photos[0]} alt={label}
+            onClick={()=>onZoom(photos[0])}
+            className={`w-full h-40 object-cover rounded-xl ${borderCls} cursor-zoom-in hover:opacity-90 transition-all`} />
+          {photos.length > 1 && (
+            <div className="flex gap-1 mt-1.5 overflow-x-auto">
+              {photos.slice(1).map((p,i)=>(
+                <img key={i} src={p} alt="" onClick={()=>onZoom(p)}
+                  className="w-12 h-12 rounded-lg object-cover border border-slate-200 cursor-zoom-in hover:opacity-80 flex-shrink-0" />
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className={`h-40 rounded-xl flex flex-col items-center justify-center text-xs border-2 border-dashed gap-1 ${emptyBg}`}>
+          <i className="fa-solid fa-image text-xl" />
+          <span className="font-bold">Chưa có ảnh</span>
+        </div>
+      )}
     </div>
   );
 }

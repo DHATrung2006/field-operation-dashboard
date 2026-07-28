@@ -31,6 +31,11 @@ const PREFIX_MAP = {
   LCM:'LAN CHI', LANCHI:'LAN CHI',
 };
 
+const KNOWN_PROJECTS = new Set([
+  'P&G', 'MAGGI', 'NESTCAFE', 'VINDA', 'STMB', 'AEON', 'LOTTE',
+  'COOP', 'BIG C / GO', 'WINMART', 'EMART', 'MEGA MARKET', 'LAN CHI',
+]);
+
 /* ─── Pure Helpers ──────────────────────────────────────────── */
 function todayISO() {
   const d = new Date();
@@ -111,15 +116,50 @@ function detectProjFolder(part) {
   return normalizeProjName(raw);
 }
 
-/** Extract time pattern (HH:MM or HH:MM:SS) from text */
+/** 
+ * Extract time from OCR text — handles AM/PM, 12h→24h, Vietnamese SA/CH.
+ * Prioritizes AM/PM patterns to avoid picking up random numbers as times.
+ */
 function extractTimeText(text) {
   if (!text) return null;
-  const m = text.match(/\b([01]?\d|2[0-3])[:\.h\s]([0-5]\d)(?:[:\.h\s]([0-5]\d))?\b/);
-  if (m) {
-    const h = String(+m[1]).padStart(2, '0');
-    const min = String(+m[2]).padStart(2, '0');
-    return `${h}:${min}`;
+  let match;
+
+  // 1. AM/PM format: "02:27:38PM", "2:27:38 PM", "02:27PM", "14:27:38CH"
+  const ampmRegex = /(\d{1,2})[:\.]?(\d{2})(?:[:\.]?(\d{2}))?\s*(AM|PM|am|pm|SA|CH|Sa|Ch)/g;
+  while ((match = ampmRegex.exec(text)) !== null) {
+    let h = parseInt(match[1]);
+    const min = parseInt(match[2]);
+    const period = match[4].toUpperCase();
+    if (h < 1 || h > 12 || min > 59) continue;
+    if (period === 'PM' || period === 'CH') {
+      if (h !== 12) h += 12;
+    } else {
+      if (h === 12) h = 0;
+    }
+    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
   }
+
+  // 2. Full HH:MM:SS (24h) — most reliable since seconds confirm it's a timestamp
+  const fullTimeRegex = /(\d{1,2})[:\.](\d{2})[:\.](\d{2})/g;
+  while ((match = fullTimeRegex.exec(text)) !== null) {
+    const h = parseInt(match[1]);
+    const min = parseInt(match[2]);
+    const sec = parseInt(match[3]);
+    if (h >= 0 && h <= 23 && min <= 59 && sec <= 59) {
+      return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+    }
+  }
+
+  // 3. HH:MM (24h) only — restrict to plausible work hours (5-22) to avoid false positives from addresses/phone numbers
+  const shortTimeRegex = /\b(\d{1,2})[:\.](\d{2})\b/g;
+  while ((match = shortTimeRegex.exec(text)) !== null) {
+    const h = parseInt(match[1]);
+    const min = parseInt(match[2]);
+    if (h >= 5 && h <= 22 && min <= 59) {
+      return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+    }
+  }
+
   return null;
 }
 
@@ -260,36 +300,40 @@ function parseUffPath(filePath) {
   };
 }
 
-/** Robust store matcher across all projects */
+/** Robust store matcher — ALWAYS checks project compatibility first */
 function isStoreMatch(sched, zip) {
   const pSched = normalizeProjName(sched.project);
   const pZip   = normalizeProjName(zip.projLabel);
 
+  // ─── PROJECT COMPATIBILITY CHECK (must pass first) ───────────
+  const schedIsKnown = KNOWN_PROJECTS.has(pSched);
+  const zipIsKnown   = KNOWN_PROJECTS.has(pZip);
+
+  // Both have recognized projects → must be the same project
+  if (schedIsKnown && zipIsKnown && pSched !== pZip) return false;
+
+  // Zip has a known project but schedule's project is unrecognized (e.g., CRV001)
+  // → different project system, don't mix them
+  if (zipIsKnown && !schedIsKnown && pSched !== 'Khác') return false;
+
+  // Schedule has a known project but zip's project is unrecognized → same logic
+  if (schedIsKnown && !zipIsKnown && pZip !== 'Khác') return false;
+
+  // ─── STORE CODE MATCH ────────────────────────────────────────
   const codeS = cleanStoreStr(sched.storeCode).replace(/\s/g, '');
   const codeZ = cleanStoreStr(zip.storeCode).replace(/\s/g, '');
-
-  const exactCodeMatch = codeS && codeZ && codeS.length >= 3 && (codeS === codeZ || codeS.includes(codeZ) || codeZ.includes(codeS));
-
-  // If store code matches, it's a match regardless of minor project label variations!
-  if (exactCodeMatch) return true;
-
-  // Check project alignment if both specified
-  if (pSched && pZip && pSched !== pZip && pSched !== 'Khác' && pZip !== 'Khác') {
-    const cleanPS = cleanStoreStr(pSched);
-    const cleanPZ = cleanStoreStr(pZip);
-    if (!cleanPS.includes(cleanPZ) && !cleanPZ.includes(cleanPS)) {
-      return false;
-    }
+  if (codeS && codeZ && codeS.length >= 3 && (codeS === codeZ || codeS.includes(codeZ) || codeZ.includes(codeS))) {
+    return true;
   }
 
-  // Numeric Code Match
+  // ─── NUMERIC CODE MATCH ──────────────────────────────────────
   const numS = extractDigits(sched.storeCode + ' ' + sched.storeName);
   const numZ = extractDigits(zip.storeCode + ' ' + zip.storeName);
   if (numS && numZ && numS.length >= 3 && numZ.length >= 3 && (numS === numZ || numS.includes(numZ) || numZ.includes(numS))) {
     return true;
   }
 
-  // Clean Unaccented Name Inclusion Match
+  // ─── NAME MATCH ──────────────────────────────────────────────
   const nameS = cleanStoreStr(sched.storeName);
   const nameZ = cleanStoreStr(zip.storeName);
   if (nameS && nameZ) {
@@ -644,10 +688,16 @@ export default function ReportView({ refreshKey }) {
         ? calcStatus(ciTime, sched.workingTime)
         : 'Chưa CI';
 
+      // Use zip's known project when schedule project is unrecognized (e.g., raw code like CRV001)
+      const schedProjKnown = KNOWN_PROJECTS.has(normalizeProjName(sched.project));
+      const bestProject = schedProjKnown
+        ? normalizeProjName(sched.project)
+        : (zip ? normalizeProjName(zip.projLabel) : normalizeProjName(sched.project));
+
       mergedRows.push({
         id:          rowId,
         date:        sched.isoDate,
-        project:     normalizeProjName(sched.project || zip?.projLabel),
+        project:     bestProject,
         brand:       sched.brand || zip?.projLabel || '—',
         storeCode:   sched.storeCode || zip?.storeCode,
         storeName:   sched.storeName || zip?.storeName,

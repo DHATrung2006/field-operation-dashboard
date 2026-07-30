@@ -66,29 +66,31 @@ module.exports = async (req, res) => {
 
     let allAaData = [];
 
-    // 3. Lặp qua từng Tenant để lấy dữ liệu bảng
-    for (const t of tenants) {
-       if (t.id > 0) {
-          try {
-             const setTenantRes = await fetch(`${baseUrl}/Tenant/SetTenantAsync?tenant=${t.id}`, {
-               method: 'POST',
-               headers: {
-                 'Content-Type': 'application/x-www-form-urlencoded',
-                 'Cookie': currentCookieHeader,
-                 'X-Requested-With': 'XMLHttpRequest',
-                 ...(requestVerificationToken ? { 'RequestVerificationToken': requestVerificationToken } : {})
-               }
-             });
-             if (setTenantRes.ok) {
-                const newCookies = parseSetCookies(setTenantRes);
-                if (newCookies.length > 0) {
-                   const oldJar = currentCookieHeader.split('; ').filter(Boolean);
-                   currentCookieHeader = mergeCookies(oldJar, newCookies).join('; ');
-                }
+    // 3. Chạy song song tất cả các Tenant để tránh bị Timeout 10s của Vercel Serverless
+    const fetchPromises = tenants.map(async (t) => {
+       if (t.id <= 0) return [];
+       let localCookieHeader = currentCookieHeader;
+       
+       try {
+          const setTenantRes = await fetch(`${baseUrl}/Tenant/SetTenantAsync?tenant=${t.id}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Cookie': localCookieHeader,
+              'X-Requested-With': 'XMLHttpRequest',
+              ...(requestVerificationToken ? { 'RequestVerificationToken': requestVerificationToken } : {})
+            }
+          });
+          if (setTenantRes.ok) {
+             const newCookies = parseSetCookies(setTenantRes);
+             if (newCookies.length > 0) {
+                const oldJar = localCookieHeader.split('; ').filter(Boolean);
+                localCookieHeader = mergeCookies(oldJar, newCookies).join('; ');
              }
-          } catch (e) {
-             console.warn(`Lỗi khi switch sang tenant ${t.id}:`, e.message);
           }
+       } catch (e) {
+          console.warn(`Lỗi khi switch sang tenant ${t.id}:`, e.message);
+          return [];
        }
 
        const dataParams = new URLSearchParams({
@@ -107,28 +109,36 @@ module.exports = async (req, res) => {
          'masterShift': '-1'
        });
        
-       const dataRes = await fetch(`${baseUrl}/CICO/GetDataAsync`, {
-         method: 'POST',
-         headers: {
-           'Content-Type': 'application/x-www-form-urlencoded',
-           'Cookie': currentCookieHeader,
-           'X-Requested-With': 'XMLHttpRequest',
-           ...(requestVerificationToken ? { 'RequestVerificationToken': requestVerificationToken } : {})
-         },
-         body: dataParams.toString()
-       });
-       
-       if (dataRes.ok) {
-          const body = await dataRes.json().catch(() => ({}));
-          const aaData = body.aaData || body.data || body.Data || [];
-          
-          // Gắn thêm project name vào từng record để dễ phân biệt (tuỳ chọn)
-          for (let item of aaData) {
-             item._tenantName = t.name || t.tenantName || t.tenantCode || 'Default';
-          }
-
-          allAaData = allAaData.concat(aaData);
+       try {
+         const dataRes = await fetch(`${baseUrl}/CICO/GetDataAsync`, {
+           method: 'POST',
+           headers: {
+             'Content-Type': 'application/x-www-form-urlencoded',
+             'Cookie': localCookieHeader,
+             'X-Requested-With': 'XMLHttpRequest',
+             ...(requestVerificationToken ? { 'RequestVerificationToken': requestVerificationToken } : {})
+           },
+           body: dataParams.toString()
+         });
+         
+         if (dataRes.ok) {
+            const body = await dataRes.json().catch(() => ({}));
+            const aaData = body.aaData || body.data || body.Data || [];
+            
+            for (let item of aaData) {
+               item._tenantName = t.name || t.tenantName || t.tenantCode || 'Default';
+            }
+            return aaData;
+         }
+       } catch (e) {
+         console.warn(`Lỗi khi fetch data tenant ${t.id}:`, e.message);
        }
+       return [];
+    });
+
+    const results = await Promise.all(fetchPromises);
+    for (const resData of results) {
+       allAaData = allAaData.concat(resData);
     }
     
     // 4. Chuẩn hoá dữ liệu để tương thích với Frontend

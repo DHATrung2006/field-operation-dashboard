@@ -1,9 +1,4 @@
-// Secure UFF proxy for the dashboard. UFF credentials stay in Vercel
-// environment variables and are never sent to the browser.
-const { verifyIdToken } = require('../auth.verify');
-
-const DEFAULT_UFF_BASE_URL = 'https://uff.interdist.com.vn/';
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const { getAuth } = require('firebase-admin/auth');
 
 class ApiError extends Error {
   constructor(status, message) {
@@ -12,164 +7,30 @@ class ApiError extends Error {
   }
 }
 
-function firstValue(source, paths) {
-  for (const path of paths) {
-    const value = path.split('.').reduce((current, key) => current?.[key], source);
-    if (value !== undefined && value !== null && value !== '') return value;
+function ensureDate(val, name) {
+  if (!val || !/^\d{4}-\d{2}-\d{2}$/.test(val)) {
+    throw new ApiError(400, `Tham số ${name} không hợp lệ (YYYY-MM-DD).`);
   }
-  return null;
-}
-
-function asArray(payload) {
-  if (Array.isArray(payload)) return payload;
-  const candidates = [
-    payload?.data,
-    payload?.result,
-    payload?.items,
-    payload?.records,
-    payload?.data?.items,
-    payload?.data?.records,
-    payload?.result?.items,
-    payload?.result?.records,
-  ];
-  return candidates.find(Array.isArray) || [];
-}
-
-function isoDate(value) {
-  if (!value) return null;
-  const direct = String(value).match(/^(\d{4}-\d{2}-\d{2})/);
-  if (direct) return direct[1];
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(date);
-}
-
-function ciTime(value) {
-  if (!value) return null;
-  const direct = String(value).match(/(?:T|\s)(\d{2}):(\d{2})/);
-  if (direct) return `${direct[1]}:${direct[2]}`;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(date);
-}
-
-function photoUrl(value, baseUrl) {
-  if (!value || typeof value !== 'string') return null;
-  const photo = value.trim();
-  if (!photo) return null;
-  if (/^https?:\/\//i.test(photo) || /^data:image\//i.test(photo)) return photo;
-  if (/^[A-Za-z0-9+/]+={0,2}$/.test(photo) && photo.length > 256) {
-    return `data:image/jpeg;base64,${photo}`;
-  }
-  try {
-    return new URL(photo, baseUrl).toString();
-  } catch {
-    return null;
-  }
-}
-
-function ensureDate(value, name) {
-  if (!DATE_PATTERN.test(String(value || ''))) {
-    throw new ApiError(400, `${name} phải có định dạng YYYY-MM-DD.`);
-  }
-  return String(value);
+  return val;
 }
 
 function uffBaseUrl() {
-  const value = process.env.UFF_BASE_URL || DEFAULT_UFF_BASE_URL;
-  let parsed;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new ApiError(500, 'UFF_BASE_URL không hợp lệ.');
-  }
-  if (parsed.protocol !== 'https:') throw new ApiError(500, 'UFF_BASE_URL phải sử dụng HTTPS.');
-  return parsed.toString().endsWith('/') ? parsed.toString() : `${parsed.toString()}/`;
+  const url = process.env.UFF_BASE_URL;
+  if (!url) throw new ApiError(503, 'Biến môi trường UFF_BASE_URL chưa được cấu hình.');
+  return url.replace(/\/+$/, '');
 }
 
-async function uffRequest(baseUrl, path, { token, query, method = 'GET', body } = {}) {
-  const url = new URL(path.replace(/^\//, ''), baseUrl);
-  for (const [key, value] of Object.entries(query || {})) {
-    if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, value);
+async function verifyIdToken(req) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    throw new ApiError(401, 'Thiếu token xác thực Firebase.');
   }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20_000);
+  const idToken = authHeader.split('Bearer ')[1];
   try {
-    const response = await fetch(url, {
-      method,
-      headers: {
-        Accept: 'application/json',
-        ...(body ? { 'Content-Type': 'application/json' } : {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-      signal: controller.signal,
-    });
-    const raw = await response.text();
-    let data = null;
-    try { data = raw ? JSON.parse(raw) : null; } catch { /* UFF returned non-JSON */ }
-    if (!response.ok) {
-      const message = data?.message || data?.error || `UFF API trả về HTTP ${response.status}.`;
-      throw new ApiError(502, message);
-    }
-    return data;
+    return await getAuth().verifyIdToken(idToken);
   } catch (error) {
-    if (error instanceof ApiError) throw error;
-    const message = error.name === 'AbortError'
-      ? 'UFF API không phản hồi trong 20 giây.'
-      : 'Không thể kết nối đến UFF API.';
-    throw new ApiError(502, message);
-  } finally {
-    clearTimeout(timeout);
+    throw new ApiError(401, 'Firebase ID token không hợp lệ.');
   }
-}
-
-function normalizeRecords(cicos, schedules, fromDate, toDate, baseUrl) {
-  const schedulesById = new Map(schedules.map(item => [String(item.id), item]));
-  const records = [];
-  const seen = new Set();
-
-  for (const cico of cicos) {
-    const scheduleId = firstValue(cico, ['scheduleId', 'schedule.id', 'scheduleID']);
-    const schedule = schedulesById.get(String(scheduleId)) || {};
-    const checkIn = firstValue(cico, ['checkInTime', 'checkinTime', 'checkInAt', 'createdAt']);
-    const date = isoDate(checkIn) || isoDate(firstValue(cico, ['date', 'scheduleDate'])) || isoDate(schedule.date);
-    if (!date || date < fromDate || date > toDate) continue;
-
-    const storeId = firstValue(cico, ['storeId', 'store.id']) || firstValue(schedule, ['storeId', 'store.id']);
-    const storeCode = firstValue(cico, ['storeCode', 'store.code', 'martCode'])
-      || firstValue(schedule, ['storeCode', 'store.code', 'martCode'])
-      || storeId;
-    const storeName = firstValue(cico, ['storeName', 'store.name', 'martName'])
-      || firstValue(schedule, ['storeName', 'store.name', 'martName'])
-      || String(storeCode || 'Store UFF');
-    const record = {
-      date,
-      ciTime: ciTime(checkIn),
-      storeId: storeId ? String(storeId) : '',
-      storeCode: storeCode ? String(storeCode) : '',
-      storeName: String(storeName),
-      empName: String(firstValue(cico, ['userName', 'user.fullName', 'employeeName', 'createdByName'])
-        || firstValue(schedule, ['userName', 'user.fullName', 'employeeName']) || ''),
-      project: String(firstValue(cico, ['projectName', 'project.name', 'brandName'])
-        || firstValue(schedule, ['projectName', 'project.name', 'brandName']) || ''),
-      ciPhoto: photoUrl(firstValue(cico, [
-        'checkInPhotoUrl', 'checkinPhotoUrl', 'checkInPhoto', 'photoUrl', 'photo', 'imageUrl',
-      ]), baseUrl),
-    };
-    const dedupeKey = `${record.date}|${record.storeCode}|${record.ciTime || ''}|${record.empName}`;
-    if (!seen.has(dedupeKey)) {
-      seen.add(dedupeKey);
-      records.push(record);
-    }
-  }
-
-  return records.sort((a, b) => `${a.date}${a.ciTime}`.localeCompare(`${b.date}${b.ciTime}`));
 }
 
 module.exports = async (req, res) => {
@@ -188,39 +49,101 @@ module.exports = async (req, res) => {
     const username = process.env.UFF_USERNAME;
     const password = process.env.UFF_PASSWORD;
     if (!username || !password) {
-      throw new ApiError(503, 'UFF chưa được cấu hình. Hãy thêm UFF_USERNAME và UFF_PASSWORD trong Vercel Environment Variables.');
+      throw new ApiError(503, 'UFF chưa được cấu hình. Hãy thêm UFF_USERNAME và UFF_PASSWORD trong Vercel.');
     }
 
     const baseUrl = uffBaseUrl();
-    const login = await uffRequest(baseUrl, 'api/Auth/login', {
-      method: 'POST',
-      body: { userName: username, password, deviceToken: 'field-operation-dashboard' },
+    
+    // 1. Tự động Login vào Web Portal (MVC)
+    const loginParams = new URLSearchParams({
+      UserName: username,
+      Password: password,
+      RememberMe: 'false'
     });
-    const token = firstValue(login, ['token', 'data.token', 'result.token']);
-    if (!token) throw new ApiError(502, 'UFF không trả về JWT token sau khi đăng nhập.');
-
-    const query = { fromDate, toDate, userId: req.query.userId };
-    const [schedulePayload, cicoPayload] = await Promise.all([
-      uffRequest(baseUrl, 'api/Schedule/get-schedules', { token, query }),
-      uffRequest(baseUrl, 'api/CICO/history', { token, query }),
-    ]);
-    const schedules = asArray(schedulePayload);
-    const cicos = asArray(cicoPayload);
-    const records = normalizeRecords(cicos, schedules, fromDate, toDate, baseUrl);
+    
+    const loginRes = await fetch(`${baseUrl}/Account/Login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: loginParams.toString(),
+      redirect: 'manual'
+    });
+    
+    // Lấy cookie
+    const cookiesRaw = loginRes.headers.get('set-cookie') || '';
+    if (!cookiesRaw.includes('.AspNetCore.Identity.Application')) {
+        throw new ApiError(502, 'Đăng nhập UFF Web Portal thất bại. Vui lòng kiểm tra lại UFF_USERNAME và UFF_PASSWORD.');
+    }
+    
+    // 2. Định dạng ngày sang dd/MM/yyyy cho Datatables UFF
+    const [y, m, d] = fromDate.split('-');
+    const startDateStr = `${d}/${m}/${y}`;
+    const [y2, m2, d2] = toDate.split('-');
+    const endDateStr = `${d2}/${m2}/${y2}`;
+    
+    // 3. Gọi API lấy dữ liệu bảng
+    const dataParams = new URLSearchParams({
+      draw: '1',
+      start: '0',
+      length: '10000',
+      startDate: startDateStr,
+      endDate: endDateStr,
+      region: '0',
+      city: '0',
+      role: '-1',
+      masterShift: '-1'
+    });
+    
+    const dataRes = await fetch(`${baseUrl}/CICO/GetDataAsync`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Cookie': cookiesRaw,
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: dataParams.toString()
+    });
+    
+    if (!dataRes.ok) {
+       throw new ApiError(502, `Lỗi khi lấy dữ liệu: HTTP ${dataRes.status}`);
+    }
+    
+    const body = await dataRes.json();
+    const aaData = body.aaData || [];
+    
+    // 4. Chuẩn hoá dữ liệu để tương thích với Frontend
+    const records = [];
+    const seen = new Set();
+    
+    for (const item of aaData) {
+       if (item.cI_TimeStr === '-' || !item.cI_TimeStr || item.cI_TimeStr.startsWith('00:00')) continue;
+       
+       const [cd, cm, cy] = item.cI_DateStr.split('/');
+       const dateIso = `${cy}-${cm}-${cd}`;
+       
+       const record = {
+          date: dateIso,
+          ciTime: item.cI_TimeStr,
+          storeId: String(item.id || ''),
+          storeCode: '', 
+          storeName: item.storeName || 'Store UFF',
+          empName: item.userName || item.userCode || 'Unknown',
+          project: '', // Web API does not easily expose brand/project
+          ciPhoto: '' // Web API datatables does not return photos directly
+       };
+       
+       const dedupeKey = `${record.date}|${item.storeName}|${record.ciTime}|${record.empName}`;
+       if (!seen.has(dedupeKey)) {
+          seen.add(dedupeKey);
+          records.push(record);
+       }
+    }
+    
+    records.sort((a, b) => `${a.date}${a.ciTime}`.localeCompare(`${b.date}${b.ciTime}`));
 
     res.setHeader('Cache-Control', 'private, no-store');
     return res.status(200).json({
       records,
-      meta: { 
-        fromDate, 
-        toDate, 
-        schedules: schedules.length, 
-        cicos: cicos.length,
-        debug: records.length === 0 ? {
-          sampleSchedule: schedules[0] || null,
-          sampleCico: cicos[0] || null,
-        } : null
-      },
+      meta: { fromDate, toDate, totalRaw: aaData.length, cicos: records.length },
     });
   } catch (error) {
     const status = error.status || 500;

@@ -1,23 +1,11 @@
 const { getAuth } = require('firebase-admin/auth');
-
-class ApiError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
+const { loginToUff, ApiError } = require('./uffAuth');
 
 function ensureDate(val, name) {
   if (!val || !/^\d{4}-\d{2}-\d{2}$/.test(val)) {
     throw new ApiError(400, `Tham số ${name} không hợp lệ (YYYY-MM-DD).`);
   }
   return val;
-}
-
-function uffBaseUrl() {
-  const url = process.env.UFF_BASE_URL;
-  if (!url) throw new ApiError(503, 'Biến môi trường UFF_BASE_URL chưa được cấu hình.');
-  return url.replace(/\/+$/, '');
 }
 
 async function verifyIdToken(req) {
@@ -46,41 +34,9 @@ module.exports = async (req, res) => {
     const toDate = ensureDate(req.query.toDate, 'toDate');
     if (fromDate > toDate) throw new ApiError(400, 'fromDate không được sau toDate.');
 
-    const username = process.env.UFF_USERNAME;
-    const password = process.env.UFF_PASSWORD;
-    if (!username || !password) {
-      throw new ApiError(503, 'UFF chưa được cấu hình. Hãy thêm UFF_USERNAME và UFF_PASSWORD trong Vercel.');
-    }
+    const { baseUrl, cookieHeader, requestVerificationToken } = await loginToUff();
 
-    const baseUrl = uffBaseUrl();
-    
-    // 1. Tự động Login vào Web Portal (MVC)
-    const loginParams = new URLSearchParams({
-      UserName: username,
-      Password: password,
-      RememberMe: 'false'
-    });
-    
-    const loginRes = await fetch(`${baseUrl}/Account/Login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: loginParams.toString(),
-      redirect: 'manual'
-    });
-    
-    // Lấy cookie một cách an toàn
-    let cookieHeader = '';
-    if (loginRes.headers.getSetCookie) {
-      cookieHeader = loginRes.headers.getSetCookie().map(c => c.split(';')[0]).join('; ');
-    } else {
-      const raw = loginRes.headers.get('set-cookie') || '';
-      cookieHeader = raw.split(/,(?!\s\d)/).map(c => c.split(';')[0]).join('; ');
-    }
 
-    if (!cookieHeader.includes('.AspNetCore.Identity.Application')) {
-        throw new ApiError(502, 'Đăng nhập UFF Web Portal thất bại. Vui lòng kiểm tra lại UFF_USERNAME và UFF_PASSWORD.');
-    }
-    
     // 2. Định dạng ngày sang dd/MM/yyyy cho Datatables UFF
     const [y, m, d] = fromDate.split('-');
     const startDateStr = `${d}/${m}/${y}`;
@@ -106,10 +62,11 @@ module.exports = async (req, res) => {
     
     const dataRes = await fetch(`${baseUrl}/CICO/GetDataAsync`, {
       method: 'POST',
-      headers: { 
+      headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Cookie': cookieHeader,
-        'X-Requested-With': 'XMLHttpRequest'
+        'X-Requested-With': 'XMLHttpRequest',
+        ...(requestVerificationToken ? { 'RequestVerificationToken': requestVerificationToken } : {})
       },
       body: dataParams.toString()
     });
@@ -121,33 +78,39 @@ module.exports = async (req, res) => {
     }
     
     const body = await dataRes.json();
-    const aaData = body.aaData || [];
+    const aaData = body.aaData || body.data || body.Data || [];
     
     // 4. Chuẩn hoá dữ liệu để tương thích với Frontend
     const records = [];
     const seen = new Set();
     
     for (const item of aaData) {
-       if (item.cI_TimeStr === '-' || !item.cI_TimeStr || item.cI_TimeStr.startsWith('00:00')) continue;
-       
-       const [cd, cm, cy] = item.cI_DateStr.split('/');
-       const dateIso = `${cy}-${cm}-${cd}`;
-       
-       const record = {
-          date: dateIso,
-          ciTime: item.cI_TimeStr,
-          storeId: String(item.id || ''),
-          storeCode: '', 
-          storeName: item.storeName || 'Store UFF',
-          empName: item.userName || item.userCode || 'Unknown',
-          project: '', // Web API does not easily expose brand/project
-          ciPhoto: '' // Web API datatables does not return photos directly
-       };
-       
-       const dedupeKey = `${record.date}|${item.storeName}|${record.ciTime}|${record.empName}`;
-       if (!seen.has(dedupeKey)) {
-          seen.add(dedupeKey);
-          records.push(record);
+       try {
+         if (item.cI_TimeStr === '-' || !item.cI_TimeStr || item.cI_TimeStr.startsWith('00:00')) continue;
+         if (!item.cI_DateStr) continue;
+
+         const [cd, cm, cy] = item.cI_DateStr.split('/');
+         const dateIso = `${cy}-${cm}-${cd}`;
+
+         const record = {
+            date: dateIso,
+            ciTime: item.cI_TimeStr,
+            cicoId: item.id != null ? String(item.id) : '', // dùng để gọi /api/uff/photo lấy ảnh CI
+            storeId: String(item.id || ''),
+            storeCode: '',
+            storeName: item.storeName || 'Store UFF',
+            empName: item.userName || item.userCode || 'Unknown',
+            project: '', // Web API does not easily expose brand/project
+         };
+
+         const dedupeKey = `${record.date}|${item.storeName}|${record.ciTime}|${record.empName}`;
+         if (!seen.has(dedupeKey)) {
+            seen.add(dedupeKey);
+            records.push(record);
+         }
+       } catch {
+         // Bỏ qua dòng có định dạng khác thường, không để một dòng lỗi làm hỏng cả lần đồng bộ
+         continue;
        }
     }
     
@@ -156,7 +119,13 @@ module.exports = async (req, res) => {
     res.setHeader('Cache-Control', 'private, no-store');
     return res.status(200).json({
       records,
-      meta: { fromDate, toDate, totalRaw: aaData.length, cicos: records.length },
+      meta: {
+        fromDate,
+        toDate,
+        totalRaw: aaData.length,
+        cicos: records.length,
+        debug: (records.length === 0 && aaData.length > 0) ? { sampleRaw: aaData[0] } : undefined,
+      },
     });
   } catch (error) {
     const status = error.status || 500;

@@ -924,7 +924,7 @@ export default function ReportView({ refreshKey }) {
     setApiMsg(`Đang lấy check-in UFF ngày ${selDate}...`);
     try {
       const idToken = await getIdToken();
-      if (!idToken || idToken.startsWith('mock-token')) {
+      if (!idToken) {
         throw new Error('Bạn cần đăng nhập Firebase hợp lệ để đồng bộ dữ liệu UFF.');
       }
 

@@ -6,8 +6,12 @@ class ApiError extends Error {
 }
 
 function uffBaseUrl() {
-  const url = process.env.UFF_BASE_URL;
+  let url = process.env.UFF_BASE_URL;
   if (!url) throw new ApiError(503, 'Biến môi trường UFF_BASE_URL chưa được cấu hình.');
+  if (url === '[SENSITIVE]') throw new ApiError(503, 'Biến UFF_BASE_URL đang bị lỗi [SENSITIVE] ở local.');
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    url = `https://${url}`;
+  }
   return url.replace(/\/+$/, '');
 }
 
@@ -46,7 +50,7 @@ async function loginToUff() {
   // 0. Tải trang Login trước để lấy cookie chống CSRF và __RequestVerificationToken.
   //    Nhiều site ASP.NET Core từ chối âm thầm POST đăng nhập nếu thiếu token này
   //    (không set cookie Identity), dù UserName/Password đúng.
-  const loginPageRes = await fetch(`${baseUrl}/Account/Login`, { redirect: 'manual' });
+  const loginPageRes = await fetch(`${baseUrl}/Account/Login`, { redirect: 'follow' });
   let cookieJar = parseSetCookies(loginPageRes);
   const loginPageHtml = await loginPageRes.text().catch(() => '');
   const tokenMatch = loginPageHtml.match(/name="__RequestVerificationToken"[^>]*value="([^"]+)"/);

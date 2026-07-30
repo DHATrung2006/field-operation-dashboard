@@ -1,13 +1,26 @@
 // api/auth.verify.js
 // Vercel Serverless Function – verify Firebase ID token and return UID
 
-const admin = require('firebase-admin');
+const firebaseAdmin = require('firebase-admin');
+const admin = firebaseAdmin.default || firebaseAdmin;
 
-// Initialize Firebase Admin only once
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.applicationDefault(),
-  });
+// Initialize Firebase Admin only once. On Vercel, set FIREBASE_SERVICE_ACCOUNT
+// to the JSON service-account object (kept server-side as an environment secret).
+if (!admin.getApps().length) {
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (serviceAccountJson) {
+    try {
+      const serviceAccount = JSON.parse(serviceAccountJson);
+      if (serviceAccount.private_key) {
+        serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+      }
+      admin.initializeApp({ credential: admin.cert(serviceAccount) });
+    } catch {
+      throw new Error('FIREBASE_SERVICE_ACCOUNT không phải JSON hợp lệ.');
+    }
+  } else {
+    admin.initializeApp({ credential: admin.applicationDefault() });
+  }
 }
 
 /**

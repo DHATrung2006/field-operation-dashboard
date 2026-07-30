@@ -3,11 +3,9 @@ import JSZip from 'jszip';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { fetchMasterData } from '../api/googleSheets';
+import { getIdToken } from '../firebase';
 
 /* ─── Constants ─────────────────────────────────────────────── */
-const UFF_BASE = 'https://uff.interdist.com.vn/';
-const UFF_USER = 'TRUNG.DHA';
-
 const STATUS_STYLE = {
   'Đúng giờ': 'bg-emerald-100 text-emerald-800 border-emerald-200',
   'Đi trễ':   'bg-amber-100  text-amber-800  border-amber-200',
@@ -477,6 +475,47 @@ async function ocrTimeFromBlobs(blobs) {
   return null;
 }
 
+/** Convert the server's normalized UFF CICO response into the existing row model. */
+function makeUffApiSession(records, selectedDate) {
+  const storeMap = {};
+
+  for (const item of records) {
+    const date = parseVNDate(item.date || '') || selectedDate;
+    const storeCode = String(item.storeCode || item.storeId || item.storeName || 'STORE').trim();
+    const key = `${date}||${storeCode.toUpperCase()}`;
+    if (!storeMap[key]) {
+      storeMap[key] = {
+        key,
+        date,
+        storeCode,
+        storeName: item.storeName || storeCode,
+        empName: item.empName || '—',
+        projLabel: normalizeProjName(item.project || 'Khác'),
+        ciPhotos: [],
+        ciBlobs: [],
+        ciTime: item.ciTime || null,
+      };
+    }
+
+    const rec = storeMap[key];
+    if (!rec.ciTime && item.ciTime) rec.ciTime = item.ciTime;
+    if (item.ciPhoto && !rec.ciPhotos.includes(item.ciPhoto)) rec.ciPhotos.push(item.ciPhoto);
+  }
+
+  const storeEntries = Object.values(storeMap);
+  const dates = [...new Set(storeEntries.map(item => item.date))].sort();
+  return {
+    id: `uff_api_${Date.now()}`,
+    source: 'uff-api',
+    fileName: `Đồng bộ API UFF · ${selectedDate}`,
+    project: 'UFF API',
+    storeCount: storeEntries.length,
+    imageCount: storeEntries.reduce((sum, item) => sum + item.ciPhotos.length, 0),
+    dates,
+    storeMap,
+  };
+}
+
 /* ═══════════════════════════════════════════════════════════════
    MAIN COMPONENT
    ═══════════════════════════════════════════════════════════════ */
@@ -879,26 +918,38 @@ export default function ReportView({ refreshKey }) {
     pdf.save(`Store_${selectedRow.storeCode}_${selectedRow.date}.pdf`);
   };
 
-  /* ── API Test ── */
-  const handleTestAPI = async () => {
+  /* ── UFF API sync ── */
+  const handleSyncUFF = async () => {
     setApiStatus('connecting');
-    setApiMsg('Đang kiểm tra kết nối...');
+    setApiMsg(`Đang lấy check-in UFF ngày ${selDate}...`);
     try {
-      const res = await fetch(`${UFF_BASE}api/Auth/login`, {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ userName:UFF_USER, password:'12345678', deviceToken:'web-dashboard' }),
-      });
-      if (res.ok) {
-        const j = await res.json();
-        setApiStatus('connected');
-        setApiMsg(`✅ Kết nối thành công! ${j.token ? 'Token OK' : ''}`);
-      } else {
-        setApiStatus('error');
-        setApiMsg(`⚠️ HTTP ${res.status}. Dùng phương thức upload Zip thủ công.`);
+      const idToken = await getIdToken();
+      if (!idToken || idToken.startsWith('mock-token')) {
+        throw new Error('Bạn cần đăng nhập Firebase hợp lệ để đồng bộ dữ liệu UFF.');
       }
+
+      const params = new URLSearchParams({ fromDate: selDate, toDate: selDate });
+      const res = await fetch(`/api/uff/report?${params}`, {
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.message || body.error || `UFF API trả về HTTP ${res.status}.`);
+      }
+
+      const session = makeUffApiSession(Array.isArray(body.records) ? body.records : [], selDate);
+      setSessions(prev => body.records?.length
+        ? [...prev.filter(item => item.source !== 'uff-api'), session]
+        : prev.filter(item => item.source !== 'uff-api')
+      );
+      setSelectedRow(null);
+      setApiStatus('connected');
+      setApiMsg(body.records?.length
+        ? `✅ Đã đồng bộ ${body.records.length} lượt check-in từ UFF.`
+        : '⚠️ UFF không trả về lượt check-in nào cho ngày đã chọn.');
     } catch (err) {
       setApiStatus('error');
-      setApiMsg(`⚠️ CORS/Network error. Hãy xuất Zip từ web UFF rồi upload lên đây.`);
+      setApiMsg(`⚠️ ${err.message || 'Không thể đồng bộ UFF.'}`);
     }
   };
 
@@ -921,7 +972,7 @@ export default function ReportView({ refreshKey }) {
             Báo cáo UFF — Đối Soát Check-In BA
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Upload file Zip ảnh CI theo từng dự án → hệ thống đọc giờ từ chữ trên ảnh (OCR) → đối soát với Lịch Master.
+            Đồng bộ giờ check-in qua UFF API hoặc upload Zip ảnh CI để OCR → đối soát với Lịch Master.
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -989,7 +1040,7 @@ export default function ReportView({ refreshKey }) {
           {/* Loaded Sessions List */}
           {sessions.length > 0 && (
             <div className="space-y-2">
-              <div className="text-[11px] text-teal-400 font-bold uppercase tracking-wider">📁 Đã Tải Lên:</div>
+              <div className="text-[11px] text-teal-400 font-bold uppercase tracking-wider">📁 Dữ Liệu Đã Nạp:</div>
               {sessions.map(sess => (
                 <div key={sess.id}
                   className="flex items-center justify-between gap-3 bg-teal-800/30 border border-teal-700/30 rounded-xl px-4 py-2.5">
@@ -1000,7 +1051,7 @@ export default function ReportView({ refreshKey }) {
                     <div className="min-w-0">
                       <div className="text-[11px] text-slate-200 font-bold truncate">{sess.fileName}</div>
                       <div className="text-[10px] text-slate-500">
-                        {sess.storeCount} store · {sess.imageCount} ảnh · {sess.dates.length} ngày ({sess.dates[0]} → {sess.dates[sess.dates.length-1]})
+                        {sess.storeCount} store · {sess.source === 'uff-api' ? 'đồng bộ từ API' : `${sess.imageCount} ảnh`} · {sess.dates.length} ngày ({sess.dates[0]} → {sess.dates[sess.dates.length-1]})
                       </div>
                     </div>
                   </div>
@@ -1021,22 +1072,22 @@ export default function ReportView({ refreshKey }) {
           {/* API Connector */}
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col gap-3">
             <div className="flex items-center gap-2 text-slate-800 font-bold text-sm">
-              <i className="fa-solid fa-server text-blue-600" /> Kết Nối UFF API
+              <i className="fa-solid fa-server text-blue-600" /> Đồng Bộ UFF API
             </div>
             <div className="text-xs bg-slate-50 rounded-xl border border-slate-100 p-3 space-y-2">
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse shrink-0" />
-                <span className="font-mono text-[10px] text-blue-700 truncate">{UFF_BASE}</span>
+                <span className="text-[10px] text-blue-700">Lấy giờ CI trực tiếp theo ngày đang chọn</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                <span className="font-mono text-[10px]">{UFF_USER}</span>
+                <span className="text-[10px] text-slate-600">Tài khoản UFF được lưu an toàn ở Vercel, không hiển thị trên trình duyệt</span>
               </div>
             </div>
-            <button onClick={handleTestAPI} disabled={apiStatus==='connecting'}
+            <button onClick={handleSyncUFF} disabled={apiStatus==='connecting'}
               className="w-full bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold py-2.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50">
               <i className={`fa-solid ${apiStatus==='connecting'?'fa-spinner animate-spin':'fa-plug'}`} />
-              {apiStatus==='connecting' ? 'Đang kiểm tra...' : 'Test Kết Nối'}
+              {apiStatus==='connecting' ? 'Đang đồng bộ...' : `Đồng Bộ Ngày ${selDate}`}
             </button>
             {apiMsg && (
               <div className={`text-[11px] p-2.5 rounded-xl font-medium ${apiStatus==='connected'?'bg-emerald-50 text-emerald-700 border border-emerald-200':'bg-amber-50 text-amber-700 border border-amber-200'}`}>

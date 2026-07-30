@@ -1056,7 +1056,7 @@ export default function ReportView({ refreshKey }) {
         </div>
       )}
 
-      {/* ── LIGHTBOX ── */}
+    {/* ── LIGHTBOX ── */}
       {previewImage && (
         <div onClick={()=>setPreviewImage(null)}
           className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 cursor-zoom-out">
@@ -1074,6 +1074,31 @@ export default function ReportView({ refreshKey }) {
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── PASTE MODAL ── */}
+      {showPasteModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <h3 className="font-bold text-slate-800"><i className="fa-solid fa-paste mr-2 text-blue-500"></i>Dán Dữ Liệu Bảng UFF</h3>
+              <button onClick={() => setShowPasteModal(false)} className="w-8 h-8 rounded-full bg-white hover:bg-slate-200 flex items-center justify-center cursor-pointer text-slate-500 transition-colors shadow-sm"><i className="fa-solid fa-xmark"></i></button>
+            </div>
+            <div className="p-4 flex-1 flex flex-col gap-2 min-h-[300px]">
+              <p className="text-xs text-slate-500">Copy <span className="font-bold">(Ctrl+C)</span> toàn bộ bảng danh sách Check-in trên website UFF (bao gồm cả dòng tiêu đề) và Dán <span className="font-bold">(Ctrl+V)</span> vào ô dưới đây:</p>
+              <textarea 
+                className="flex-1 w-full border border-slate-200 rounded-xl p-3 text-[11px] font-mono outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 resize-none whitespace-pre"
+                placeholder="STT	Mã NV	Tên nhân viên	vai trò	Tên cửa hàng	Loại ca	Ngày	Giờ CI	Giờ CO..."
+                value={pasteData}
+                onChange={e => setPasteData(e.target.value)}
+              ></textarea>
+            </div>
+            <div className="p-4 border-t border-slate-100 flex justify-end gap-2 bg-slate-50">
+              <button onClick={() => setShowPasteModal(false)} className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer">Hủy</button>
+              <button onClick={handlePasteSubmit} className="px-4 py-2 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-colors shadow-md cursor-pointer flex items-center gap-1.5"><i className="fa-solid fa-check"></i> Xử Lý Dữ Liệu</button>
+            </div>
           </div>
         </div>
       )}

@@ -166,6 +166,53 @@ function calcStatus(ciTime, workingTime) {
   return ciMins > schedMins + 5 ? 'Đi trễ' : 'Đúng giờ';
 }
 
+window.localPhotoMap = window.localPhotoMap || {};
+
+function parseUffTable(tsv, fallbackDate) {
+  const lines = tsv.trim().split('\n').map(l => l.split('\t').map(c => c.trim()));
+  if (lines.length < 2) return [];
+
+  const header = lines[0].map(h => h.toLowerCase());
+  const idxEmpCode = header.findIndex(h => h.includes('mã nv') || h.includes('mã nhân viên'));
+  const idxEmpName = header.findIndex(h => h.includes('tên nhân viên') || h.includes('tên nv'));
+  const idxStore = header.findIndex(h => h.includes('tên cửa hàng') || h.includes('cửa hàng'));
+  const idxDate = header.findIndex(h => h.includes('ngày') && !h.includes('giờ'));
+  const idxCI = header.findIndex(h => h.includes('giờ ci'));
+  
+  if (idxEmpCode === -1 || idxCI === -1) {
+     throw new Error("Dữ liệu không đúng định dạng. Cần có cột Mã NV và Giờ CI.");
+  }
+
+  const records = [];
+  for (let i = 1; i < lines.length; i++) {
+    const row = lines[i];
+    if (row.length < 3) continue;
+    let dateIso = fallbackDate;
+    if (idxDate !== -1 && row[idxDate]) {
+       const rawDate = row[idxDate];
+       const dateParts = rawDate.split('/'); // DD/MM/YYYY
+       if (dateParts.length === 3) dateIso = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`;
+    }
+    
+    const empCode = row[idxEmpCode];
+    if (!empCode) continue;
+
+    const ciTime = row[idxCI] && row[idxCI] !== '-' && row[idxCI] !== '' ? row[idxCI] : null;
+    const storeCodeOrName = idxStore !== -1 ? row[idxStore] : 'Unknown';
+
+    records.push({
+      date: dateIso,
+      storeCode: storeCodeOrName,
+      storeName: storeCodeOrName,
+      empName: idxEmpName !== -1 ? row[idxEmpName] : empCode,
+      ciTime: ciTime,
+      cicoId: `LOCAL_${dateIso}_${empCode.toUpperCase()}`,
+      project: 'Dán Bảng UFF'
+    });
+  }
+  return records;
+}
+
 /** Convert the server's normalized UFF CICO response into the existing row model. */
 function makeUffApiSession(records, selectedDate) {
   const storeMap = {};
@@ -230,6 +277,11 @@ export default function ReportView({ refreshKey }) {
   const [photoCache, setPhotoCache] = useState({}); // { [cicoId]: 'loading' | { photos, error } }
   const photoRequestsInFlight = useRef(new Set());
 
+  // Offline Import States
+  const [pasteData, setPasteData] = useState('');
+  const [showPasteModal, setShowPasteModal] = useState(false);
+  const folderInputRef = useRef();
+
   const projectRefs = useRef({});
   const modalRef     = useRef();
 
@@ -243,6 +295,18 @@ export default function ReportView({ refreshKey }) {
   /* Nạp ảnh CI cho 1 lượt check-in (lazy, gọi khi người dùng thực sự cần xem) */
   const loadCiPhoto = useCallback(async (cicoId, { force = false } = {}) => {
     if (!cicoId) return;
+
+    // Ảnh Offline (Local)
+    if (cicoId.startsWith('LOCAL_')) {
+       const urls = window.localPhotoMap && window.localPhotoMap[cicoId];
+       if (urls && urls.length > 0) {
+          setPhotoCache(prev => ({ ...prev, [cicoId]: { photos: urls.map(u => ({ dataUri: u })), error: null } }));
+       } else {
+          setPhotoCache(prev => ({ ...prev, [cicoId]: { photos: [], error: 'Chưa nạp thư mục ảnh cho nhân viên này.' } }));
+       }
+       return;
+    }
+
     if (!force && photoRequestsInFlight.current.has(cicoId)) return;
     photoRequestsInFlight.current.add(cicoId);
     setPhotoCache(prev => ({ ...prev, [cicoId]: 'loading' }));
@@ -270,6 +334,66 @@ export default function ReportView({ refreshKey }) {
     if (entry.error) return { state: 'error', error: entry.error };
     if (!entry.photos.length) return { state: 'empty' };
     return { state: 'ready', photos: entry.photos.map(p => p.dataUri) };
+  };
+
+  /* Xử lý Dán Bảng UFF */
+  const handlePasteSubmit = () => {
+    try {
+      const records = parseUffTable(pasteData, selDate);
+      if (records.length === 0) {
+        alert('Không tìm thấy dữ liệu hợp lệ. Vui lòng copy đầy đủ bảng có chứa tiêu đề.');
+        return;
+      }
+      const session = makeUffApiSession(records, selDate);
+      session.source = 'uff-paste';
+      session.fileName = `Dán Bảng UFF · ${records.length} CI`;
+      setSessions(prev => [session, ...prev]);
+      setShowPasteModal(false);
+      setPasteData('');
+      alert(`Đã nạp thành công ${records.length} lượt Check-in!`);
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
+  /* Xử lý Nhập Thư Mục Ảnh */
+  const handleFolderImport = (e) => {
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+    
+    let count = 0;
+    for (const file of files) {
+      if (!file.type.startsWith('image/')) continue;
+      const parts = file.webkitRelativePath.split('/');
+      if (parts.length < 3) continue;
+      
+      const dateIndex = parts.findIndex(p => /^\d{8}$/.test(p));
+      if (dateIndex === -1) continue;
+
+      const rawDate = parts[dateIndex];
+      const dateIso = `${rawDate.slice(0,4)}-${rawDate.slice(4,6)}-${rawDate.slice(6,8)}`;
+      
+      const empStr = parts[dateIndex + 2];
+      if (!empStr) continue;
+
+      const empCode = empStr.split('_')[0].toUpperCase();
+      const cicoId = `LOCAL_${dateIso}_${empCode}`;
+
+      if (!window.localPhotoMap[cicoId]) {
+        window.localPhotoMap[cicoId] = [];
+      }
+      window.localPhotoMap[cicoId].push(URL.createObjectURL(file));
+      count++;
+    }
+    
+    if (count > 0) {
+      alert(`Đã nạp thành công ${count} ảnh check-in từ thư mục!`);
+      setPhotoCache(prev => ({...prev}));
+    } else {
+      alert('Không tìm thấy ảnh hợp lệ trong thư mục này.');
+    }
+    
+    if (folderInputRef.current) folderInputRef.current.value = '';
   };
 
   /* Merged check-in lookup (hiện chỉ có 1 nguồn: session đồng bộ từ UFF API) */
@@ -583,26 +707,30 @@ export default function ReportView({ refreshKey }) {
         </div>
       </div>
 
-      {/* ── API CONNECTOR ── */}
+      {/* ── API / OFFLINE CONNECTOR ── */}
       <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col gap-3">
         <div className="flex items-center gap-2 text-slate-800 font-bold text-sm">
-          <i className="fa-solid fa-server text-blue-600" /> Đồng Bộ UFF API
+          <i className="fa-solid fa-server text-blue-600" /> Đồng Bộ Dữ Liệu UFF
         </div>
-        <div className="text-xs bg-slate-50 rounded-xl border border-slate-100 p-3 space-y-2">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse shrink-0" />
-            <span className="text-[10px] text-blue-700">Lấy giờ CI trực tiếp theo ngày đang chọn</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-            <span className="text-[10px] text-slate-600">Tài khoản UFF được lưu an toàn ở Vercel, không hiển thị trên trình duyệt</span>
-          </div>
+        
+        {/* Offline Methods */}
+        <div className="grid grid-cols-2 gap-2">
+          <button onClick={() => setShowPasteModal(true)} className="flex items-center justify-center gap-1.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-xs font-bold py-2.5 rounded-xl transition-all cursor-pointer shadow-sm">
+            <i className="fa-solid fa-paste" /> Dán Bảng UFF
+          </button>
+          <label className="flex items-center justify-center gap-1.5 bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 text-xs font-bold py-2.5 rounded-xl transition-all cursor-pointer shadow-sm">
+            <i className="fa-solid fa-folder-open" /> Nhập Ảnh UFF
+            <input type="file" ref={folderInputRef} webkitdirectory="true" directory="true" multiple className="hidden" onChange={handleFolderImport} />
+          </label>
         </div>
+
+        {/* Online API Sync */}
         <button onClick={handleSyncUFF} disabled={apiStatus==='connecting'}
-          className="w-full bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold py-2.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50">
+          className="w-full bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 text-xs font-bold py-2.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50 mt-1">
           <i className={`fa-solid ${apiStatus==='connecting'?'fa-spinner animate-spin':'fa-plug'}`} />
-          {apiStatus==='connecting' ? 'Đang đồng bộ...' : `Đồng Bộ Ngày ${selDate}`}
+          {apiStatus==='connecting' ? 'Đang đồng bộ tự động...' : `Đồng Bộ API Tự Động (Ngày ${selDate})`}
         </button>
+
         {apiMsg && (
           <div className={`text-[11px] p-2.5 rounded-xl font-medium ${apiStatus==='connected'?'bg-emerald-50 text-emerald-700 border border-emerald-200':'bg-amber-50 text-amber-700 border border-amber-200'}`}>
             {apiMsg}
@@ -880,10 +1008,10 @@ export default function ReportView({ refreshKey }) {
                           onClick={()=>{ setPreviewList(p.photos); setPreviewImage(p.photos[0]); }}
                           className="w-full h-52 object-cover rounded-xl border-2 border-emerald-200 cursor-zoom-in hover:opacity-90 transition-all" />
                         {p.photos.length > 1 && (
-                          <div className="flex gap-1.5 mt-2 overflow-x-auto">
-                            {p.photos.map((photoUrl,i)=>(
-                              <img key={i} src={photoUrl} alt="" onClick={()=>{ setPreviewList(p.photos); setPreviewImage(photoUrl); }}
-                                className="w-14 h-14 rounded-lg object-cover border border-slate-200 cursor-zoom-in hover:opacity-80 flex-shrink-0" />
+                          <div className="flex gap-2 justify-center mt-3 overflow-x-auto pb-1">
+                            {p.photos.map((src, idx) => (
+                              <img key={idx} src={src} onClick={(e)=>{e.stopPropagation();setPreviewImage(src);}} 
+                                className={`h-16 w-16 object-cover rounded-lg cursor-pointer border-2 transition-all ${src===previewImage?'border-white opacity-100':'border-transparent opacity-50 hover:opacity-100'}`} />
                             ))}
                           </div>
                         )}

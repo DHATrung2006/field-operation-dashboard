@@ -3,6 +3,7 @@
   import html2canvas from 'html2canvas';
   import { fetchMasterData } from '../api/googleSheets';
   import { getIdToken } from '../firebase';
+  import * as XLSX from 'xlsx';
 
   /* ─── Constants ─────────────────────────────────────────────── */
   const STATUS_STYLE = {
@@ -168,49 +169,76 @@
 
   window.localPhotoMap = window.localPhotoMap || {};
 
-  function parseUffTable(tsv, fallbackDate) {
-    const lines = tsv.trim().split('\n').map(l => l.split('\t').map(c => c.trim()));
-    if (lines.length < 2) return [];
+  async function parseExcelCI(file, fallbackDate) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: '' });
 
-    const header = lines[0].map(h => h.toLowerCase());
-    const idxEmpCode = header.findIndex(h => h.includes('mã nv') || h.includes('mã nhân viên'));
-    const idxEmpName = header.findIndex(h => h.includes('tên nhân viên') || h.includes('tên nv'));
-    const idxStore = header.findIndex(h => h.includes('tên cửa hàng') || h.includes('cửa hàng'));
-    const idxDate = header.findIndex(h => h.includes('ngày') && !h.includes('giờ'));
-    const idxCI = header.findIndex(h => h.includes('giờ ci'));
-    
-    if (idxEmpCode === -1 || idxCI === -1) {
-      throw new Error("Dữ liệu không đúng định dạng. Cần có cột Mã NV và Giờ CI.");
-    }
+          if (rows.length === 0) return resolve([]);
 
-    const records = [];
-    for (let i = 1; i < lines.length; i++) {
-      const row = lines[i];
-      if (row.length < 3) continue;
-      let dateIso = fallbackDate;
-      if (idxDate !== -1 && row[idxDate]) {
-        const rawDate = row[idxDate];
-        const dateParts = rawDate.split('/'); // DD/MM/YYYY
-        if (dateParts.length === 3) dateIso = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`;
-      }
-      
-      const empCode = row[idxEmpCode];
-      if (!empCode) continue;
+          // Find correct keys by checking lowercase versions
+          const keys = Object.keys(rows[0]);
+          const keyMap = {};
+          for (const k of keys) {
+            const lowerK = k.toLowerCase().trim();
+            if (lowerK.includes('mã nhân viên') || lowerK.includes('mã nv')) keyMap.empCode = k;
+            if (lowerK.includes('tên nhân viên') || lowerK.includes('tên nv')) keyMap.empName = k;
+            if (lowerK.includes('mã cửa hàng') || lowerK.includes('mã siêu thị')) keyMap.storeCode = k;
+            if (lowerK.includes('tên cửa hàng') || lowerK.includes('siêu thị')) keyMap.storeName = k;
+            if (lowerK.includes('ngày ci')) keyMap.dateCI = k;
+            if (lowerK.includes('thời gian ci')) keyMap.timeCI = k;
+            if (lowerK.includes('kênh')) keyMap.channel = k;
+          }
 
-      const ciTime = row[idxCI] && row[idxCI] !== '-' && row[idxCI] !== '' ? row[idxCI] : null;
-      const storeCodeOrName = idxStore !== -1 ? row[idxStore] : 'Unknown';
+          if (!keyMap.empCode || !keyMap.timeCI) {
+            return reject(new Error("File Excel không đúng định dạng chuẩn. Cần có cột 'Mã nhân viên' và 'Thời gian CI'."));
+          }
 
-      records.push({
-        date: dateIso,
-        storeCode: storeCodeOrName,
-        storeName: storeCodeOrName,
-        empName: idxEmpName !== -1 ? row[idxEmpName] : empCode,
-        ciTime: ciTime,
-        cicoId: `LOCAL_${dateIso}_${empCode.toUpperCase()}`,
-        project: 'Dán Bảng UFF'
-      });
-    }
-    return records;
+          const records = [];
+          for (const row of rows) {
+            const empCode = row[keyMap.empCode]?.toString().trim();
+            if (!empCode) continue;
+
+            let dateIso = fallbackDate;
+            if (keyMap.dateCI && row[keyMap.dateCI]) {
+              const rawDate = row[keyMap.dateCI].toString().trim();
+              const dateParts = rawDate.split('/'); // DD/MM/YYYY
+              if (dateParts.length === 3) dateIso = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`;
+            }
+            
+            let ciTime = null;
+            if (row[keyMap.timeCI]) {
+              ciTime = row[keyMap.timeCI].toString().trim();
+              if (ciTime === '-' || ciTime === '' || ciTime === '00:00:00') ciTime = null;
+            }
+
+            const storeCode = keyMap.storeCode ? row[keyMap.storeCode]?.toString().trim() : 'Unknown';
+            const storeName = keyMap.storeName ? row[keyMap.storeName]?.toString().trim() : storeCode;
+            const project = keyMap.channel ? row[keyMap.channel]?.toString().trim() : 'UFF Excel';
+
+            records.push({
+              date: dateIso,
+              storeCode,
+              storeName,
+              empName: keyMap.empName ? row[keyMap.empName]?.toString().trim() : empCode,
+              ciTime,
+              cicoId: `LOCAL_${dateIso}_${empCode.toUpperCase()}`,
+              project
+            });
+          }
+          resolve(records);
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = () => reject(new Error("Lỗi khi đọc file Excel."));
+      reader.readAsArrayBuffer(file);
+    });
   }
 
   /** Convert the server's normalized UFF CICO response into the existing row model. */
@@ -278,8 +306,10 @@
     const photoRequestsInFlight = useRef(new Set());
 
     // Offline Import States
-    const [pasteData, setPasteData] = useState('');
-    const [showPasteModal, setShowPasteModal] = useState(false);
+    const [excelFile, setExcelFile] = useState(null);
+    const [folderFiles, setFolderFiles] = useState([]);
+    
+    const excelInputRef = useRef();
     const folderInputRef = useRef();
 
     const projectRefs = useRef({});
@@ -336,96 +366,66 @@
       return { state: 'ready', photos: entry.photos.map(p => p.dataUri) };
     };
 
-    /* Xử lý Dán Bảng UFF — gắn Store/Dự Án từ thư mục ảnh đã nhập (nếu có), nối qua Mã NV + Ngày */
-    const handlePasteSubmit = () => {
-      try {
-        const records = parseUffTable(pasteData, selDate);
-        if (records.length === 0) {
-          alert('Không tìm thấy dữ liệu hợp lệ. Vui lòng copy đầy đủ bảng có chứa tiêu đề.');
-          return;
-        }
+  /* Xử lý Hybrid: Excel + Ảnh Folder */
+  const handleHybridProceed = async () => {
+    if (!excelFile) {
+      alert('Vui lòng chọn File Excel CI báo cáo UFF trước!');
+      return;
+    }
+    
+    try {
+      // 1. Map folder files
+      let photoCount = 0;
+      if (folderFiles.length > 0) {
+        for (const file of folderFiles) {
+          if (!file.type.startsWith('image/')) continue;
+          const parts = file.webkitRelativePath.split('/');
+          if (parts.length < 3) continue;
+          
+          const dateIndex = parts.findIndex(p => /^\d{8}$/.test(p));
+          if (dateIndex === -1) continue;
 
-        const folderInfoMap = window.localFolderInfoMap || {};
-        let enrichedCount = 0;
-        for (const rec of records) {
-          const info = folderInfoMap[rec.cicoId];
-          if (!info) continue;
-          if (info.storeCode) rec.storeCode = info.storeCode;
-          if (info.storeName) rec.storeName = info.storeName;
-          if (info.project) rec.project = info.project;
-          enrichedCount++;
-        }
+          const rawDate = parts[dateIndex];
+          const dateIso = `${rawDate.slice(0,4)}-${rawDate.slice(4,6)}-${rawDate.slice(6,8)}`;
+          
+          const empStr = parts[dateIndex + 2];
+          if (!empStr) continue;
 
-        const session = makeUffApiSession(records, selDate);
-        session.source = 'uff-paste';
-        session.fileName = `Dán Bảng UFF · ${records.length} CI`;
-        setSessions(prev => [session, ...prev]);
-        setShowPasteModal(false);
-        setPasteData('');
-        alert(`Đã nạp thành công ${records.length} lượt Check-in!` + (enrichedCount ? ` (${enrichedCount} dòng đã gắn Store/Dự Án từ thư mục ảnh đã nhập.)` : ''));
-      } catch (e) {
-        alert(e.message);
-      }
-    };
+          const empCode = empStr.split('_')[0].toUpperCase();
+          const cicoId = `LOCAL_${dateIso}_${empCode}`;
 
-    /* Xử lý Nhập Thư Mục Ảnh — cấu trúc: Project_DateRange / Date / StoreCode_StoreName / EmpCode_EmpName / CI / xxx.jpg
-       Ngoài lưu ảnh vào localPhotoMap, còn suy ra Store (folder ngay sau Ngày) & Dự Án (prefix folder gốc) theo Mã NV+Ngày,
-       để "Dán Bảng UFF" tự gắn lại khi bảng dán không có/sai cột Tên cửa hàng. */
-    const handleFolderImport = (e) => {
-      const files = Array.from(e.target.files);
-      if (!files.length) return;
-
-      window.localFolderInfoMap = window.localFolderInfoMap || {};
-
-      let count = 0;
-      let storeCount = 0;
-      for (const file of files) {
-        if (!file.type.startsWith('image/')) continue;
-        const parts = file.webkitRelativePath.split('/');
-        if (parts.length < 3) continue;
-
-        const dateIndex = parts.findIndex(p => /^\d{8}$/.test(p));
-        if (dateIndex === -1) continue;
-
-        const rawDate = parts[dateIndex];
-        const dateIso = `${rawDate.slice(0,4)}-${rawDate.slice(4,6)}-${rawDate.slice(6,8)}`;
-
-        const storeStr = parts[dateIndex + 1];
-        const empStr = parts[dateIndex + 2];
-        if (!empStr) continue;
-
-        const empCode = empStr.split('_')[0].toUpperCase();
-        const cicoId = `LOCAL_${dateIso}_${empCode}`;
-
-        if (!window.localPhotoMap[cicoId]) {
-          window.localPhotoMap[cicoId] = [];
-        }
-        window.localPhotoMap[cicoId].push(URL.createObjectURL(file));
-        count++;
-
-        if (!window.localFolderInfoMap[cicoId] && storeStr) {
-          const [storeCode, ...rest] = storeStr.split('_');
-          const storeName = rest.join(' ').trim();
-          const projPart = parts[dateIndex - 1] || '';
-          const projPrefix = projPart.split('_')[0];
-          window.localFolderInfoMap[cicoId] = {
-            storeCode: storeCode || '',
-            storeName: storeName || storeCode || '',
-            project: projPrefix ? normalizeProjName(projPrefix) : '',
-          };
-          storeCount++;
+          if (!window.localPhotoMap[cicoId]) window.localPhotoMap[cicoId] = [];
+          window.localPhotoMap[cicoId].push(URL.createObjectURL(file));
+          photoCount++;
         }
       }
 
-      if (count > 0) {
-        alert(`Đã nạp thành công ${count} ảnh check-in từ thư mục (nhận diện ${storeCount} store).`);
-        setPhotoCache(prev => ({...prev}));
-      } else {
-        alert('Không tìm thấy ảnh hợp lệ trong thư mục này.');
+      // 2. Đọc file Excel
+      const records = await parseExcelCI(excelFile, selDate);
+      if (records.length === 0) {
+        alert('Không tìm thấy dữ liệu hợp lệ trong file Excel.');
+        return;
       }
 
+      // 3. Tạo session
+      const session = makeUffApiSession(records, selDate);
+      session.source = 'uff-offline';
+      session.fileName = `Offline Import · ${records.length} CI${photoCount > 0 ? ` + ${photoCount} Ảnh` : ''}`;
+      
+      setSessions(prev => [session, ...prev]);
+      setPhotoCache(prev => ({...prev})); // Trigger re-render to load local photo state
+      
+      // Reset
+      setExcelFile(null);
+      setFolderFiles([]);
+      if (excelInputRef.current) excelInputRef.current.value = '';
       if (folderInputRef.current) folderInputRef.current.value = '';
-    };
+      
+      alert(`Đã hợp nhất thành công ${records.length} lượt Check-in và ${photoCount} hình ảnh!`);
+    } catch (e) {
+      alert(e.message);
+    }
+  };
 
     /* Merged check-in lookup (hiện chỉ có 1 nguồn: session đồng bộ từ UFF API) */
   const mergedZipMap = useMemo(() => {
@@ -745,14 +745,26 @@
         </div>
         
         {/* Offline Methods */}
-        <div className="grid grid-cols-2 gap-2">
-          <button onClick={() => setShowPasteModal(true)} className="flex items-center justify-center gap-1.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-xs font-bold py-2.5 rounded-xl transition-all cursor-pointer shadow-sm">
-            <i className="fa-solid fa-paste" /> Dán Bảng UFF
+        <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 flex flex-col gap-3">
+          <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 pb-2">
+            Đồng Bộ Offline (File + Ảnh)
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <label className={`flex flex-col items-center justify-center gap-1.5 ${excelFile ? 'bg-blue-100 border-blue-300 text-blue-800' : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-600'} border text-xs font-bold py-3 rounded-xl transition-all cursor-pointer shadow-sm`}>
+              <i className={`fa-solid ${excelFile ? 'fa-file-excel text-emerald-500' : 'fa-file-csv'} text-lg`} /> 
+              {excelFile ? 'Đã chọn File Excel' : 'Tải Lên File Excel CI'}
+              <input type="file" ref={excelInputRef} accept=".xlsx,.xls,.csv" className="hidden" onChange={(e) => setExcelFile(e.target.files[0])} />
+            </label>
+            <label className={`flex flex-col items-center justify-center gap-1.5 ${folderFiles.length ? 'bg-purple-100 border-purple-300 text-purple-800' : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-600'} border text-xs font-bold py-3 rounded-xl transition-all cursor-pointer shadow-sm`}>
+              <i className={`fa-solid ${folderFiles.length ? 'fa-images text-emerald-500' : 'fa-folder-open'} text-lg`} /> 
+              {folderFiles.length ? `Đã chọn ${folderFiles.length} File` : 'Tải Lên Thư Mục Ảnh'}
+              <input type="file" ref={folderInputRef} webkitdirectory="true" directory="true" multiple className="hidden" onChange={(e) => setFolderFiles(Array.from(e.target.files))} />
+            </label>
+          </div>
+          <button onClick={handleHybridProceed} disabled={!excelFile}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 shadow-md disabled:opacity-50 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed">
+            <i className="fa-solid fa-wand-magic-sparkles" /> Tiến Hành Xử Lý Dữ Liệu
           </button>
-          <label className="flex items-center justify-center gap-1.5 bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 text-xs font-bold py-2.5 rounded-xl transition-all cursor-pointer shadow-sm">
-            <i className="fa-solid fa-folder-open" /> Nhập Ảnh UFF
-            <input type="file" ref={folderInputRef} webkitdirectory="true" directory="true" multiple className="hidden" onChange={handleFolderImport} />
-          </label>
         </div>
 
         {/* Online API Sync */}
@@ -1105,31 +1117,6 @@
                 ))}
               </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* ── PASTE MODAL ── */}
-      {showPasteModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
-            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-              <h3 className="font-bold text-slate-800"><i className="fa-solid fa-paste mr-2 text-blue-500"></i>Dán Dữ Liệu Bảng UFF</h3>
-              <button onClick={() => setShowPasteModal(false)} className="w-8 h-8 rounded-full bg-white hover:bg-slate-200 flex items-center justify-center cursor-pointer text-slate-500 transition-colors shadow-sm"><i className="fa-solid fa-xmark"></i></button>
-            </div>
-            <div className="p-4 flex-1 flex flex-col gap-2 min-h-[300px]">
-              <p className="text-xs text-slate-500">Copy <span className="font-bold">(Ctrl+C)</span> toàn bộ bảng danh sách Check-in trên website UFF (bao gồm cả dòng tiêu đề) và Dán <span className="font-bold">(Ctrl+V)</span> vào ô dưới đây:</p>
-              <textarea 
-                className="flex-1 w-full border border-slate-200 rounded-xl p-3 text-[11px] font-mono outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 resize-none whitespace-pre"
-                placeholder="STT	Mã NV	Tên nhân viên	vai trò	Tên cửa hàng	Loại ca	Ngày	Giờ CI	Giờ CO..."
-                value={pasteData}
-                onChange={e => setPasteData(e.target.value)}
-              ></textarea>
-            </div>
-            <div className="p-4 border-t border-slate-100 flex justify-end gap-2 bg-slate-50">
-              <button onClick={() => setShowPasteModal(false)} className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer">Hủy</button>
-              <button onClick={handlePasteSubmit} className="px-4 py-2 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-colors shadow-md cursor-pointer flex items-center gap-1.5"><i className="fa-solid fa-check"></i> Xử Lý Dữ Liệu</button>
-            </div>
           </div>
         </div>
       )}

@@ -68,9 +68,16 @@ module.exports = async (req, res) => {
       redirect: 'manual'
     });
     
-    // Lấy cookie
-    const cookiesRaw = loginRes.headers.get('set-cookie') || '';
-    if (!cookiesRaw.includes('.AspNetCore.Identity.Application')) {
+    // Lấy cookie một cách an toàn
+    let cookieHeader = '';
+    if (loginRes.headers.getSetCookie) {
+      cookieHeader = loginRes.headers.getSetCookie().map(c => c.split(';')[0]).join('; ');
+    } else {
+      const raw = loginRes.headers.get('set-cookie') || '';
+      cookieHeader = raw.split(/,(?!\s\d)/).map(c => c.split(';')[0]).join('; ');
+    }
+
+    if (!cookieHeader.includes('.AspNetCore.Identity.Application')) {
         throw new ApiError(502, 'Đăng nhập UFF Web Portal thất bại. Vui lòng kiểm tra lại UFF_USERNAME và UFF_PASSWORD.');
     }
     
@@ -82,29 +89,35 @@ module.exports = async (req, res) => {
     
     // 3. Gọi API lấy dữ liệu bảng
     const dataParams = new URLSearchParams({
-      draw: '1',
-      start: '0',
-      length: '10000',
-      startDate: startDateStr,
-      endDate: endDateStr,
-      region: '0',
-      city: '0',
-      role: '-1',
-      masterShift: '-1'
+      'draw': '1',
+      'start': '0',
+      'length': '10000',
+      'search[value]': '',
+      'search[regex]': 'false',
+      'order[0][column]': '4',
+      'order[0][dir]': 'desc',
+      'startDate': startDateStr,
+      'endDate': endDateStr,
+      'region': '0',
+      'city': '0',
+      'role': '-1',
+      'masterShift': '-1'
     });
     
     const dataRes = await fetch(`${baseUrl}/CICO/GetDataAsync`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/x-www-form-urlencoded',
-        'Cookie': cookiesRaw,
+        'Cookie': cookieHeader,
         'X-Requested-With': 'XMLHttpRequest'
       },
       body: dataParams.toString()
     });
     
     if (!dataRes.ok) {
-       throw new ApiError(502, `Lỗi khi lấy dữ liệu: HTTP ${dataRes.status}`);
+       // Thử lấy nội dung lỗi từ server
+       const errText = await dataRes.text().catch(() => '');
+       throw new ApiError(502, `Lỗi khi lấy dữ liệu: HTTP ${dataRes.status}. Chi tiết: ${errText.substring(0, 100)}`);
     }
     
     const body = await dataRes.json();

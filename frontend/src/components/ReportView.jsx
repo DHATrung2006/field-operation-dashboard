@@ -1,402 +1,433 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
-import { fetchMasterData } from '../api/googleSheets';
-import { getIdToken } from '../firebase';
+  import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+  import jsPDF from 'jspdf';
+  import html2canvas from 'html2canvas';
+  import { fetchMasterData } from '../api/googleSheets';
+  import { getIdToken } from '../firebase';
 
-/* ─── Constants ─────────────────────────────────────────────── */
-const STATUS_STYLE = {
-  'Đúng giờ': 'bg-emerald-100 text-emerald-800 border-emerald-200',
-  'Đi trễ':   'bg-amber-100  text-amber-800  border-amber-200',
-  'Chưa CI':  'bg-rose-100   text-rose-800   border-rose-200',
-};
+  /* ─── Constants ─────────────────────────────────────────────── */
+  const STATUS_STYLE = {
+    'Đúng giờ': 'bg-emerald-100 text-emerald-800 border-emerald-200',
+    'Đi trễ':   'bg-amber-100  text-amber-800  border-amber-200',
+    'Chưa CI':  'bg-rose-100   text-rose-800   border-rose-200',
+  };
 
-// UFF zip folder prefix & store code → normalized project name for actual projects in sheet
-const PREFIX_MAP = {
-  PNG:'P&G', PG:'P&G', 'P&G':'P&G', BHX:'P&G', 'BÁCH HÓA XANH':'P&G', 'BACH HOA XANH':'P&G',
-  MAG:'MAGGI', MGI:'MAGGI', MAGGI:'MAGGI', MGI_:'MAGGI',
-  NCF:'NESTCAFE', NSF:'NESTCAFE', NSC:'NESTCAFE', NES:'NESTCAFE', NESTCAFE:'NESTCAFE', NESCAFE:'NESTCAFE',
-  VDA:'VINDA', VND:'VINDA', VIN:'VINDA', VINDA:'VINDA', DRYPERS:'VINDA', TENA:'VINDA',
-  STM:'STMB', STMB:'STMB', SUNTORY:'STMB', PEPSI:'STMB', SPB:'STMB',
-  AEO:'AEON', AEON:'AEON', AEONMALL:'AEON', AE:'AEON',
-  LOT:'LOTTE', LOTTE:'LOTTE',
-  COP:'COOP', COOP:'COOP', COOPXTRA:'COOP',
-  BIG:'BIG C / GO', BIGC:'BIG C / GO', GO:'BIG C / GO',
-  WIN:'WINMART', WINMART:'WINMART', WM:'WINMART',
-  EMA:'EMART', EMART:'EMART',
-  MM:'MEGA MARKET', MEGAMARKET:'MEGA MARKET', MEGA:'MEGA MARKET',
-  LCM:'LAN CHI', LANCHI:'LAN CHI',
-};
+  // UFF zip folder prefix & store code → normalized project name for actual projects in sheet
+  const PREFIX_MAP = {
+    PNG:'P&G', PG:'P&G', 'P&G':'P&G', BHX:'P&G', 'BÁCH HÓA XANH':'P&G', 'BACH HOA XANH':'P&G',
+    MAG:'MAGGI', MGI:'MAGGI', MAGGI:'MAGGI', MGI_:'MAGGI',
+    NCF:'NESCAFE', NSF:'NESCAFE', NSC:'NESCAFE', NES:'NESCAFE', NESTCAFE:'NESCAFE', NESCAFE:'NESCAFE',
+    VDA:'VINDA', VND:'VINDA', VIN:'VINDA', VINDA:'VINDA', DRYPERS:'VINDA', TENA:'VINDA',
+    STM:'STMB', STMB:'STMB', SUNTORY:'STMB', PEPSI:'STMB', SPB:'STMB',
+    AEO:'AEON', AEON:'AEON', AEONMALL:'AEON', AE:'AEON',
+    LOT:'LOTTE', LOTTE:'LOTTE',
+    COP:'COOP', COOP:'COOP', COOPXTRA:'COOP',
+    BIG:'BIG C / GO', BIGC:'BIG C / GO', GO:'BIG C / GO',
+    WIN:'WINMART', WINMART:'WINMART', WM:'WINMART',
+    EMA:'EMART', EMART:'EMART',
+    MM:'MEGA MARKET', MEGAMARKET:'MEGA MARKET', MEGA:'MEGA MARKET',
+    LCM:'LAN CHI', LANCHI:'LAN CHI',
+  };
 
-const KNOWN_PROJECTS = new Set([
-  'P&G', 'MAGGI', 'NESTCAFE', 'VINDA', 'STMB', 'AEON', 'LOTTE',
-  'COOP', 'BIG C / GO', 'WINMART', 'EMART', 'MEGA MARKET', 'LAN CHI',
-]);
+  const KNOWN_PROJECTS = new Set([
+    'P&G', 'MAGGI', 'NESCAFE', 'VINDA', 'STMB', 'AEON', 'LOTTE',
+    'COOP', 'BIG C / GO', 'WINMART', 'EMART', 'MEGA MARKET', 'LAN CHI',
+  ]);
 
-/* ─── Pure Helpers ──────────────────────────────────────────── */
-function todayISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-}
-function pad(n) { return String(n).padStart(2,'0'); }
-
-/** Remove Vietnamese diacritics */
-function removeAccents(str) {
-  if (!str) return '';
-  return String(str)
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/đ/g, 'd')
-    .replace(/Đ/g, 'D');
-}
-
-/** Clean & normalize string for matching */
-function cleanStoreStr(str) {
-  if (!str) return '';
-  return removeAccents(str)
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/** Extract numbers with at least 3 digits */
-function extractDigits(str) {
-  const m = String(str || '').match(/\d{3,}/g);
-  return m ? m.join('') : '';
-}
-
-/** Universal Project Name Normalizer */
-function normalizeProjName(p) {
-  if (!p) return 'Khác';
-  const raw = String(p).trim().toUpperCase();
-  for (const [k, v] of Object.entries(PREFIX_MAP)) {
-    if (raw === k || raw.startsWith(k)) return v;
+  /* ─── Pure Helpers ──────────────────────────────────────────── */
+  function todayISO() {
+    const d = new Date();
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
   }
-  if (/NEST|NCF|NSF|NSC|NES/.test(raw)) return 'NESTCAFE';
-  if (/PNG|P&G|PG|BHX/.test(raw)) return 'P&G';
-  if (/MAGGI|MAG|MGI/.test(raw)) return 'MAGGI';
-  if (/VINDA|VDA|VND|VIN/.test(raw)) return 'VINDA';
-  if (/STMB|STM|SUNTORY/.test(raw)) return 'STMB';
-  if (/AEON|AEO/.test(raw)) return 'AEON';
-  if (/LOTTE|LOT/.test(raw)) return 'LOTTE';
-  if (/COOP|COP/.test(raw)) return 'COOP';
-  if (/BIGC|BIG|GO_/.test(raw)) return 'BIG C / GO';
-  if (/WIN|WM_/.test(raw)) return 'WINMART';
-  if (/EMART|EMA/.test(raw)) return 'EMART';
-  if (/MEGA|MM_/.test(raw)) return 'MEGA MARKET';
-  if (/LANCHI|LCM/.test(raw)) return 'LAN CHI';
-  return p;
-}
+  function pad(n) { return String(n).padStart(2,'0'); }
 
-/** Flexible date parser into YYYY-MM-DD */
-function parseVNDate(str) {
-  if (!str) return null;
-  const s = String(str).trim();
-  let m;
-  m = s.match(/(\d+)\s+(?:tháng|thg)?\s*(\d+)[,\s]+(\d{4})/i);
-  if (m) return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`;
-  m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/);
-  if (m) return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`;
-  m = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
-  if (m) return `${m[1]}-${pad(+m[2])}-${pad(+m[3])}`;
-  m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-  return null;
-}
-
-/** Robust store matcher — ALWAYS checks project compatibility first */
-function isStoreMatch(sched, zip) {
-  const pSched = normalizeProjName(sched.project);
-  const pZip   = normalizeProjName(zip.projLabel);
-
-  // ─── PROJECT COMPATIBILITY CHECK (must pass first) ───────────
-  const schedIsKnown = KNOWN_PROJECTS.has(pSched);
-  const zipIsKnown   = KNOWN_PROJECTS.has(pZip);
-
-  // Both have recognized projects → must be the same project
-  if (schedIsKnown && zipIsKnown && pSched !== pZip) return false;
-
-  // Zip has a known project but schedule's project is unrecognized (e.g., CRV001)
-  // → different project system, don't mix them
-  if (zipIsKnown && !schedIsKnown && pSched !== 'Khác') return false;
-
-  // Schedule has a known project but zip's project is unrecognized → same logic
-  if (schedIsKnown && !zipIsKnown && pZip !== 'Khác') return false;
-
-  // ─── STORE CODE MATCH ────────────────────────────────────────
-  const codeS = cleanStoreStr(sched.storeCode).replace(/\s/g, '');
-  const codeZ = cleanStoreStr(zip.storeCode).replace(/\s/g, '');
-  if (codeS && codeZ && codeS.length >= 3 && (codeS === codeZ || codeS.includes(codeZ) || codeZ.includes(codeS))) {
-    return true;
+  /** Remove Vietnamese diacritics */
+  function removeAccents(str) {
+    if (!str) return '';
+    return String(str)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/đ/g, 'd')
+      .replace(/Đ/g, 'D');
   }
 
-  // ─── NUMERIC CODE MATCH ──────────────────────────────────────
-  const numS = extractDigits(sched.storeCode + ' ' + sched.storeName);
-  const numZ = extractDigits(zip.storeCode + ' ' + zip.storeName);
-  if (numS && numZ && numS.length >= 3 && numZ.length >= 3 && (numS === numZ || numS.includes(numZ) || numZ.includes(numS))) {
-    return true;
+  /** Clean & normalize string for matching */
+  function cleanStoreStr(str) {
+    if (!str) return '';
+    return removeAccents(str)
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
-  // ─── NAME MATCH ──────────────────────────────────────────────
-  const nameS = cleanStoreStr(sched.storeName);
-  const nameZ = cleanStoreStr(zip.storeName);
-  if (nameS && nameZ) {
-    if (nameS.includes(nameZ) || nameZ.includes(nameS)) return true;
+  /** Extract numbers with at least 3 digits */
+  function extractDigits(str) {
+    const m = String(str || '').match(/\d{3,}/g);
+    return m ? m.join('') : '';
+  }
 
-    const wordsZ = nameZ.split(' ').filter(w => w.length > 2);
-    if (wordsZ.length >= 2) {
-      const matchCount = wordsZ.filter(w => nameS.includes(w)).length;
-      if (matchCount / wordsZ.length >= 0.5) return true;
+  /** Universal Project Name Normalizer */
+  function normalizeProjName(p) {
+    if (!p) return 'Khác';
+    const raw = String(p).trim().toUpperCase();
+    for (const [k, v] of Object.entries(PREFIX_MAP)) {
+      if (raw === k || raw.startsWith(k)) return v;
     }
+    if (/NEST|NCF|NSF|NSC|NES/.test(raw)) return 'NESCAFE';
+    if (/PNG|P&G|PG|BHX/.test(raw)) return 'P&G';
+    if (/MAGGI|MAG|MGI/.test(raw)) return 'MAGGI';
+    if (/VINDA|VDA|VND|VIN/.test(raw)) return 'VINDA';
+    if (/STMB|STM|SUNTORY/.test(raw)) return 'STMB';
+    if (/AEON|AEO/.test(raw)) return 'AEON';
+    if (/LOTTE|LOT/.test(raw)) return 'LOTTE';
+    if (/COOP|COP/.test(raw)) return 'COOP';
+    if (/BIGC|BIG|GO_/.test(raw)) return 'BIG C / GO';
+    if (/WIN|WM_/.test(raw)) return 'WINMART';
+    if (/EMART|EMA/.test(raw)) return 'EMART';
+    if (/MEGA|MM_/.test(raw)) return 'MEGA MARKET';
+    if (/LANCHI|LCM/.test(raw)) return 'LAN CHI';
+    return p;
   }
 
-  return false;
-}
-
-/** Determine status: Đúng giờ / Đi trễ / Chưa CI */
-function calcStatus(ciTime, workingTime) {
-  if (!ciTime || ciTime === '—') return 'Chưa CI';
-  if (!workingTime || workingTime === '—') return 'Đúng giờ';
-  const sm = workingTime.match(/(\d{1,2}):(\d{2})/);
-  const cm = ciTime.match(/(\d{1,2}):(\d{2})/);
-  if (!sm || !cm) return 'Đúng giờ';
-  const schedMins = +sm[1]*60 + +sm[2];
-  const ciMins    = +cm[1]*60 + +cm[2];
-  return ciMins > schedMins + 5 ? 'Đi trễ' : 'Đúng giờ';
-}
-
-window.localPhotoMap = window.localPhotoMap || {};
-
-function parseUffTable(tsv, fallbackDate) {
-  const lines = tsv.trim().split('\n').map(l => l.split('\t').map(c => c.trim()));
-  if (lines.length < 2) return [];
-
-  const header = lines[0].map(h => h.toLowerCase());
-  const idxEmpCode = header.findIndex(h => h.includes('mã nv') || h.includes('mã nhân viên'));
-  const idxEmpName = header.findIndex(h => h.includes('tên nhân viên') || h.includes('tên nv'));
-  const idxStore = header.findIndex(h => h.includes('tên cửa hàng') || h.includes('cửa hàng'));
-  const idxDate = header.findIndex(h => h.includes('ngày') && !h.includes('giờ'));
-  const idxCI = header.findIndex(h => h.includes('giờ ci'));
-  
-  if (idxEmpCode === -1 || idxCI === -1) {
-     throw new Error("Dữ liệu không đúng định dạng. Cần có cột Mã NV và Giờ CI.");
+  /** Flexible date parser into YYYY-MM-DD */
+  function parseVNDate(str) {
+    if (!str) return null;
+    const s = String(str).trim();
+    let m;
+    m = s.match(/(\d+)\s+(?:tháng|thg)?\s*(\d+)[,\s]+(\d{4})/i);
+    if (m) return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`;
+    m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/);
+    if (m) return `${m[3]}-${pad(+m[2])}-${pad(+m[1])}`;
+    m = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
+    if (m) return `${m[1]}-${pad(+m[2])}-${pad(+m[3])}`;
+    m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+    return null;
   }
 
-  const records = [];
-  for (let i = 1; i < lines.length; i++) {
-    const row = lines[i];
-    if (row.length < 3) continue;
-    let dateIso = fallbackDate;
-    if (idxDate !== -1 && row[idxDate]) {
-       const rawDate = row[idxDate];
-       const dateParts = rawDate.split('/'); // DD/MM/YYYY
-       if (dateParts.length === 3) dateIso = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`;
+  /** Robust store matcher — ALWAYS checks project compatibility first */
+  function isStoreMatch(sched, zip) {
+    const pSched = normalizeProjName(sched.project);
+    const pZip   = normalizeProjName(zip.projLabel);
+
+    // ─── PROJECT COMPATIBILITY CHECK (must pass first) ───────────
+    const schedIsKnown = KNOWN_PROJECTS.has(pSched);
+    const zipIsKnown   = KNOWN_PROJECTS.has(pZip);
+
+    // Both have recognized projects → must be the same project
+    if (schedIsKnown && zipIsKnown && pSched !== pZip) return false;
+
+    // Zip has a known project but schedule's project is unrecognized (e.g., CRV001)
+    // → different project system, don't mix them
+    if (zipIsKnown && !schedIsKnown && pSched !== 'Khác') return false;
+
+    // Schedule has a known project but zip's project is unrecognized → same logic
+    if (schedIsKnown && !zipIsKnown && pZip !== 'Khác') return false;
+
+    // ─── STORE CODE MATCH ────────────────────────────────────────
+    const codeS = cleanStoreStr(sched.storeCode).replace(/\s/g, '');
+    const codeZ = cleanStoreStr(zip.storeCode).replace(/\s/g, '');
+    if (codeS && codeZ && codeS.length >= 3 && (codeS === codeZ || codeS.includes(codeZ) || codeZ.includes(codeS))) {
+      return true;
     }
+
+    // ─── NUMERIC CODE MATCH ──────────────────────────────────────
+    const numS = extractDigits(sched.storeCode + ' ' + sched.storeName);
+    const numZ = extractDigits(zip.storeCode + ' ' + zip.storeName);
+    if (numS && numZ && numS.length >= 3 && numZ.length >= 3 && (numS === numZ || numS.includes(numZ) || numZ.includes(numS))) {
+      return true;
+    }
+
+    // ─── NAME MATCH ──────────────────────────────────────────────
+    const nameS = cleanStoreStr(sched.storeName);
+    const nameZ = cleanStoreStr(zip.storeName);
+    if (nameS && nameZ) {
+      if (nameS.includes(nameZ) || nameZ.includes(nameS)) return true;
+
+      const wordsZ = nameZ.split(' ').filter(w => w.length > 2);
+      if (wordsZ.length >= 2) {
+        const matchCount = wordsZ.filter(w => nameS.includes(w)).length;
+        if (matchCount / wordsZ.length >= 0.5) return true;
+      }
+    }
+
+    return false;
+  }
+
+  /** Determine status: Đúng giờ / Đi trễ / Chưa CI */
+  function calcStatus(ciTime, workingTime) {
+    if (!ciTime || ciTime === '—') return 'Chưa CI';
+    if (!workingTime || workingTime === '—') return 'Đúng giờ';
+    const sm = workingTime.match(/(\d{1,2}):(\d{2})/);
+    const cm = ciTime.match(/(\d{1,2}):(\d{2})/);
+    if (!sm || !cm) return 'Đúng giờ';
+    const schedMins = +sm[1]*60 + +sm[2];
+    const ciMins    = +cm[1]*60 + +cm[2];
+    return ciMins > schedMins + 5 ? 'Đi trễ' : 'Đúng giờ';
+  }
+
+  window.localPhotoMap = window.localPhotoMap || {};
+
+  function parseUffTable(tsv, fallbackDate) {
+    const lines = tsv.trim().split('\n').map(l => l.split('\t').map(c => c.trim()));
+    if (lines.length < 2) return [];
+
+    const header = lines[0].map(h => h.toLowerCase());
+    const idxEmpCode = header.findIndex(h => h.includes('mã nv') || h.includes('mã nhân viên'));
+    const idxEmpName = header.findIndex(h => h.includes('tên nhân viên') || h.includes('tên nv'));
+    const idxStore = header.findIndex(h => h.includes('tên cửa hàng') || h.includes('cửa hàng'));
+    const idxDate = header.findIndex(h => h.includes('ngày') && !h.includes('giờ'));
+    const idxCI = header.findIndex(h => h.includes('giờ ci'));
     
-    const empCode = row[idxEmpCode];
-    if (!empCode) continue;
-
-    const ciTime = row[idxCI] && row[idxCI] !== '-' && row[idxCI] !== '' ? row[idxCI] : null;
-    const storeCodeOrName = idxStore !== -1 ? row[idxStore] : 'Unknown';
-
-    records.push({
-      date: dateIso,
-      storeCode: storeCodeOrName,
-      storeName: storeCodeOrName,
-      empName: idxEmpName !== -1 ? row[idxEmpName] : empCode,
-      ciTime: ciTime,
-      cicoId: `LOCAL_${dateIso}_${empCode.toUpperCase()}`,
-      project: 'Dán Bảng UFF'
-    });
-  }
-  return records;
-}
-
-/** Convert the server's normalized UFF CICO response into the existing row model. */
-function makeUffApiSession(records, selectedDate) {
-  const storeMap = {};
-
-  for (const item of records) {
-    const date = parseVNDate(item.date || '') || selectedDate;
-    const storeCode = String(item.storeCode || item.storeId || item.storeName || 'STORE').trim();
-    const key = `${date}||${storeCode.toUpperCase()}`;
-    if (!storeMap[key]) {
-      storeMap[key] = {
-        key,
-        date,
-        storeCode,
-        storeName: item.storeName || storeCode,
-        empName: item.empName || '—',
-        projLabel: normalizeProjName(item.project || 'Khác'),
-        ciTime: item.ciTime || null,
-        cicoId: item.cicoId || null,
-      };
+    if (idxEmpCode === -1 || idxCI === -1) {
+      throw new Error("Dữ liệu không đúng định dạng. Cần có cột Mã NV và Giờ CI.");
     }
 
-    const rec = storeMap[key];
-    if (!rec.ciTime && item.ciTime) rec.ciTime = item.ciTime;
-    if (!rec.cicoId && item.cicoId) rec.cicoId = item.cicoId;
-  }
+    const records = [];
+    for (let i = 1; i < lines.length; i++) {
+      const row = lines[i];
+      if (row.length < 3) continue;
+      let dateIso = fallbackDate;
+      if (idxDate !== -1 && row[idxDate]) {
+        const rawDate = row[idxDate];
+        const dateParts = rawDate.split('/'); // DD/MM/YYYY
+        if (dateParts.length === 3) dateIso = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`;
+      }
+      
+      const empCode = row[idxEmpCode];
+      if (!empCode) continue;
 
-  const storeEntries = Object.values(storeMap);
-  const dates = [...new Set(storeEntries.map(item => item.date))].sort();
-  return {
-    id: `uff_api_${Date.now()}`,
-    source: 'uff-api',
-    fileName: `Đồng bộ API UFF · ${selectedDate}`,
-    project: 'UFF API',
-    storeCount: storeEntries.length,
-    dates,
-    storeMap,
-  };
-}
+      const ciTime = row[idxCI] && row[idxCI] !== '-' && row[idxCI] !== '' ? row[idxCI] : null;
+      const storeCodeOrName = idxStore !== -1 ? row[idxStore] : 'Unknown';
 
-/* ═══════════════════════════════════════════════════════════════
-   MAIN COMPONENT
-   ═══════════════════════════════════════════════════════════════ */
-export default function ReportView({ refreshKey }) {
-  const [masterData, setMasterData] = useState([]);
-  const [sessions, setSessions]     = useState([]);
-
-  // Filters
-  const [search,     setSearch]     = useState('');
-  const [selProject, setSelProject] = useState('Tất cả');
-  const [selDate,    setSelDate]    = useState(todayISO);
-  const [selStatus,  setSelStatus]  = useState('');
-
-  const [selectedRow,  setSelectedRow]  = useState(null);
-  const [previewImage, setPreviewImage] = useState(null);
-  const [previewList,  setPreviewList]  = useState([]);
-
-  // API test
-  const [apiStatus, setApiStatus] = useState('idle');
-  const [apiMsg,    setApiMsg]    = useState('');
-
-  // Ảnh CI nạp theo yêu cầu (lazy) qua /api/uff/photo, khoá theo cicoId
-  const [photoCache, setPhotoCache] = useState({}); // { [cicoId]: 'loading' | { photos, error } }
-  const photoRequestsInFlight = useRef(new Set());
-
-  // Offline Import States
-  const [pasteData, setPasteData] = useState('');
-  const [showPasteModal, setShowPasteModal] = useState(false);
-  const folderInputRef = useRef();
-
-  const projectRefs = useRef({});
-  const modalRef     = useRef();
-
-  /* ── Load Master Data ── */
-  useEffect(() => {
-    fetchMasterData()
-      .then(d => { if (Array.isArray(d)) setMasterData(d); })
-      .catch(() => {});
-  }, [refreshKey]);
-
-  /* Nạp ảnh CI cho 1 lượt check-in (lazy, gọi khi người dùng thực sự cần xem) */
-  const loadCiPhoto = useCallback(async (cicoId, { force = false } = {}) => {
-    if (!cicoId) return;
-
-    // Ảnh Offline (Local)
-    if (cicoId.startsWith('LOCAL_')) {
-       const urls = window.localPhotoMap && window.localPhotoMap[cicoId];
-       if (urls && urls.length > 0) {
-          setPhotoCache(prev => ({ ...prev, [cicoId]: { photos: urls.map(u => ({ dataUri: u })), error: null } }));
-       } else {
-          setPhotoCache(prev => ({ ...prev, [cicoId]: { photos: [], error: 'Chưa nạp thư mục ảnh cho nhân viên này.' } }));
-       }
-       return;
-    }
-
-    if (!force && photoRequestsInFlight.current.has(cicoId)) return;
-    photoRequestsInFlight.current.add(cicoId);
-    setPhotoCache(prev => ({ ...prev, [cicoId]: 'loading' }));
-    try {
-      const idToken = await getIdToken();
-      const res = await fetch(`/api/uff/photo?cicoId=${encodeURIComponent(cicoId)}`, {
-        headers: idToken ? { Authorization: `Bearer ${idToken}` } : {},
+      records.push({
+        date: dateIso,
+        storeCode: storeCodeOrName,
+        storeName: storeCodeOrName,
+        empName: idxEmpName !== -1 ? row[idxEmpName] : empCode,
+        ciTime: ciTime,
+        cicoId: `LOCAL_${dateIso}_${empCode.toUpperCase()}`,
+        project: 'Dán Bảng UFF'
       });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.message || `HTTP ${res.status}`);
-      setPhotoCache(prev => ({ ...prev, [cicoId]: { photos: body.photos || [], error: null } }));
-    } catch (err) {
-      setPhotoCache(prev => ({ ...prev, [cicoId]: { photos: [], error: err.message || 'Không tải được ảnh.' } }));
-    } finally {
-      photoRequestsInFlight.current.delete(cicoId);
     }
-  }, []);
+    return records;
+  }
 
-  /* Trạng thái ảnh CI hiện tại của 1 lượt check-in, đọc từ photoCache */
-  const getPhotoEntry = (cicoId) => {
-    if (!cicoId) return { state: 'no-id' };
-    const entry = photoCache[cicoId];
-    if (!entry) return { state: 'idle' };
-    if (entry === 'loading') return { state: 'loading' };
-    if (entry.error) return { state: 'error', error: entry.error };
-    if (!entry.photos.length) return { state: 'empty' };
-    return { state: 'ready', photos: entry.photos.map(p => p.dataUri) };
-  };
+  /** Convert the server's normalized UFF CICO response into the existing row model. */
+  function makeUffApiSession(records, selectedDate) {
+    const storeMap = {};
 
-  /* Xử lý Dán Bảng UFF */
-  const handlePasteSubmit = () => {
-    try {
-      const records = parseUffTable(pasteData, selDate);
-      if (records.length === 0) {
-        alert('Không tìm thấy dữ liệu hợp lệ. Vui lòng copy đầy đủ bảng có chứa tiêu đề.');
+    for (const item of records) {
+      const date = parseVNDate(item.date || '') || selectedDate;
+      const storeCode = String(item.storeCode || item.storeId || item.storeName || 'STORE').trim();
+      const key = `${date}||${storeCode.toUpperCase()}`;
+      if (!storeMap[key]) {
+        storeMap[key] = {
+          key,
+          date,
+          storeCode,
+          storeName: item.storeName || storeCode,
+          empName: item.empName || '—',
+          projLabel: normalizeProjName(item.project || 'Khác'),
+          ciTime: item.ciTime || null,
+          cicoId: item.cicoId || null,
+        };
+      }
+
+      const rec = storeMap[key];
+      if (!rec.ciTime && item.ciTime) rec.ciTime = item.ciTime;
+      if (!rec.cicoId && item.cicoId) rec.cicoId = item.cicoId;
+    }
+
+    const storeEntries = Object.values(storeMap);
+    const dates = [...new Set(storeEntries.map(item => item.date))].sort();
+    return {
+      id: `uff_api_${Date.now()}`,
+      source: 'uff-api',
+      fileName: `Đồng bộ API UFF · ${selectedDate}`,
+      project: 'UFF API',
+      storeCount: storeEntries.length,
+      dates,
+      storeMap,
+    };
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+    MAIN COMPONENT
+    ═══════════════════════════════════════════════════════════════ */
+  export default function ReportView({ refreshKey }) {
+    const [masterData, setMasterData] = useState([]);
+    const [sessions, setSessions]     = useState([]);
+
+    // Filters
+    const [search,     setSearch]     = useState('');
+    const [selProject, setSelProject] = useState('Tất cả');
+    const [selDate,    setSelDate]    = useState(todayISO);
+    const [selStatus,  setSelStatus]  = useState('');
+
+    const [selectedRow,  setSelectedRow]  = useState(null);
+    const [previewImage, setPreviewImage] = useState(null);
+    const [previewList,  setPreviewList]  = useState([]);
+
+    // API test
+    const [apiStatus, setApiStatus] = useState('idle');
+    const [apiMsg,    setApiMsg]    = useState('');
+
+    // Ảnh CI nạp theo yêu cầu (lazy) qua /api/uff/photo, khoá theo cicoId
+    const [photoCache, setPhotoCache] = useState({}); // { [cicoId]: 'loading' | { photos, error } }
+    const photoRequestsInFlight = useRef(new Set());
+
+    // Offline Import States
+    const [pasteData, setPasteData] = useState('');
+    const [showPasteModal, setShowPasteModal] = useState(false);
+    const folderInputRef = useRef();
+
+    const projectRefs = useRef({});
+    const modalRef     = useRef();
+
+    /* ── Load Master Data ── */
+    useEffect(() => {
+      fetchMasterData()
+        .then(d => { if (Array.isArray(d)) setMasterData(d); })
+        .catch(() => {});
+    }, [refreshKey]);
+
+    /* Nạp ảnh CI cho 1 lượt check-in (lazy, gọi khi người dùng thực sự cần xem) */
+    const loadCiPhoto = useCallback(async (cicoId, { force = false } = {}) => {
+      if (!cicoId) return;
+
+      // Ảnh Offline (Local)
+      if (cicoId.startsWith('LOCAL_')) {
+        const urls = window.localPhotoMap && window.localPhotoMap[cicoId];
+        if (urls && urls.length > 0) {
+            setPhotoCache(prev => ({ ...prev, [cicoId]: { photos: urls.map(u => ({ dataUri: u })), error: null } }));
+        } else {
+            setPhotoCache(prev => ({ ...prev, [cicoId]: { photos: [], error: 'Chưa nạp thư mục ảnh cho nhân viên này.' } }));
+        }
         return;
       }
-      const session = makeUffApiSession(records, selDate);
-      session.source = 'uff-paste';
-      session.fileName = `Dán Bảng UFF · ${records.length} CI`;
-      setSessions(prev => [session, ...prev]);
-      setShowPasteModal(false);
-      setPasteData('');
-      alert(`Đã nạp thành công ${records.length} lượt Check-in!`);
-    } catch (e) {
-      alert(e.message);
-    }
-  };
 
-  /* Xử lý Nhập Thư Mục Ảnh */
-  const handleFolderImport = (e) => {
-    const files = Array.from(e.target.files);
-    if (!files.length) return;
-    
-    let count = 0;
-    for (const file of files) {
-      if (!file.type.startsWith('image/')) continue;
-      const parts = file.webkitRelativePath.split('/');
-      if (parts.length < 3) continue;
-      
-      const dateIndex = parts.findIndex(p => /^\d{8}$/.test(p));
-      if (dateIndex === -1) continue;
-
-      const rawDate = parts[dateIndex];
-      const dateIso = `${rawDate.slice(0,4)}-${rawDate.slice(4,6)}-${rawDate.slice(6,8)}`;
-      
-      const empStr = parts[dateIndex + 2];
-      if (!empStr) continue;
-
-      const empCode = empStr.split('_')[0].toUpperCase();
-      const cicoId = `LOCAL_${dateIso}_${empCode}`;
-
-      if (!window.localPhotoMap[cicoId]) {
-        window.localPhotoMap[cicoId] = [];
+      if (!force && photoRequestsInFlight.current.has(cicoId)) return;
+      photoRequestsInFlight.current.add(cicoId);
+      setPhotoCache(prev => ({ ...prev, [cicoId]: 'loading' }));
+      try {
+        const idToken = await getIdToken();
+        const res = await fetch(`/api/uff/photo?cicoId=${encodeURIComponent(cicoId)}`, {
+          headers: idToken ? { Authorization: `Bearer ${idToken}` } : {},
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.message || `HTTP ${res.status}`);
+        setPhotoCache(prev => ({ ...prev, [cicoId]: { photos: body.photos || [], error: null } }));
+      } catch (err) {
+        setPhotoCache(prev => ({ ...prev, [cicoId]: { photos: [], error: err.message || 'Không tải được ảnh.' } }));
+      } finally {
+        photoRequestsInFlight.current.delete(cicoId);
       }
-      window.localPhotoMap[cicoId].push(URL.createObjectURL(file));
-      count++;
-    }
-    
-    if (count > 0) {
-      alert(`Đã nạp thành công ${count} ảnh check-in từ thư mục!`);
-      setPhotoCache(prev => ({...prev}));
-    } else {
-      alert('Không tìm thấy ảnh hợp lệ trong thư mục này.');
-    }
-    
-    if (folderInputRef.current) folderInputRef.current.value = '';
-  };
+    }, []);
 
-  /* Merged check-in lookup (hiện chỉ có 1 nguồn: session đồng bộ từ UFF API) */
+    /* Trạng thái ảnh CI hiện tại của 1 lượt check-in, đọc từ photoCache */
+    const getPhotoEntry = (cicoId) => {
+      if (!cicoId) return { state: 'no-id' };
+      const entry = photoCache[cicoId];
+      if (!entry) return { state: 'idle' };
+      if (entry === 'loading') return { state: 'loading' };
+      if (entry.error) return { state: 'error', error: entry.error };
+      if (!entry.photos.length) return { state: 'empty' };
+      return { state: 'ready', photos: entry.photos.map(p => p.dataUri) };
+    };
+
+    /* Xử lý Dán Bảng UFF — gắn Store/Dự Án từ thư mục ảnh đã nhập (nếu có), nối qua Mã NV + Ngày */
+    const handlePasteSubmit = () => {
+      try {
+        const records = parseUffTable(pasteData, selDate);
+        if (records.length === 0) {
+          alert('Không tìm thấy dữ liệu hợp lệ. Vui lòng copy đầy đủ bảng có chứa tiêu đề.');
+          return;
+        }
+
+        const folderInfoMap = window.localFolderInfoMap || {};
+        let enrichedCount = 0;
+        for (const rec of records) {
+          const info = folderInfoMap[rec.cicoId];
+          if (!info) continue;
+          if (info.storeCode) rec.storeCode = info.storeCode;
+          if (info.storeName) rec.storeName = info.storeName;
+          if (info.project) rec.project = info.project;
+          enrichedCount++;
+        }
+
+        const session = makeUffApiSession(records, selDate);
+        session.source = 'uff-paste';
+        session.fileName = `Dán Bảng UFF · ${records.length} CI`;
+        setSessions(prev => [session, ...prev]);
+        setShowPasteModal(false);
+        setPasteData('');
+        alert(`Đã nạp thành công ${records.length} lượt Check-in!` + (enrichedCount ? ` (${enrichedCount} dòng đã gắn Store/Dự Án từ thư mục ảnh đã nhập.)` : ''));
+      } catch (e) {
+        alert(e.message);
+      }
+    };
+
+    /* Xử lý Nhập Thư Mục Ảnh — cấu trúc: Project_DateRange / Date / StoreCode_StoreName / EmpCode_EmpName / CI / xxx.jpg
+       Ngoài lưu ảnh vào localPhotoMap, còn suy ra Store (folder ngay sau Ngày) & Dự Án (prefix folder gốc) theo Mã NV+Ngày,
+       để "Dán Bảng UFF" tự gắn lại khi bảng dán không có/sai cột Tên cửa hàng. */
+    const handleFolderImport = (e) => {
+      const files = Array.from(e.target.files);
+      if (!files.length) return;
+
+      window.localFolderInfoMap = window.localFolderInfoMap || {};
+
+      let count = 0;
+      let storeCount = 0;
+      for (const file of files) {
+        if (!file.type.startsWith('image/')) continue;
+        const parts = file.webkitRelativePath.split('/');
+        if (parts.length < 3) continue;
+
+        const dateIndex = parts.findIndex(p => /^\d{8}$/.test(p));
+        if (dateIndex === -1) continue;
+
+        const rawDate = parts[dateIndex];
+        const dateIso = `${rawDate.slice(0,4)}-${rawDate.slice(4,6)}-${rawDate.slice(6,8)}`;
+
+        const storeStr = parts[dateIndex + 1];
+        const empStr = parts[dateIndex + 2];
+        if (!empStr) continue;
+
+        const empCode = empStr.split('_')[0].toUpperCase();
+        const cicoId = `LOCAL_${dateIso}_${empCode}`;
+
+        if (!window.localPhotoMap[cicoId]) {
+          window.localPhotoMap[cicoId] = [];
+        }
+        window.localPhotoMap[cicoId].push(URL.createObjectURL(file));
+        count++;
+
+        if (!window.localFolderInfoMap[cicoId] && storeStr) {
+          const [storeCode, ...rest] = storeStr.split('_');
+          const storeName = rest.join(' ').trim();
+          const projPart = parts[dateIndex - 1] || '';
+          const projPrefix = projPart.split('_')[0];
+          window.localFolderInfoMap[cicoId] = {
+            storeCode: storeCode || '',
+            storeName: storeName || storeCode || '',
+            project: projPrefix ? normalizeProjName(projPrefix) : '',
+          };
+          storeCount++;
+        }
+      }
+
+      if (count > 0) {
+        alert(`Đã nạp thành công ${count} ảnh check-in từ thư mục (nhận diện ${storeCount} store).`);
+        setPhotoCache(prev => ({...prev}));
+      } else {
+        alert('Không tìm thấy ảnh hợp lệ trong thư mục này.');
+      }
+
+      if (folderInputRef.current) folderInputRef.current.value = '';
+    };
+
+    /* Merged check-in lookup (hiện chỉ có 1 nguồn: session đồng bộ từ UFF API) */
   const mergedZipMap = useMemo(() => {
     const m = new Map();
     for (const sess of sessions) {

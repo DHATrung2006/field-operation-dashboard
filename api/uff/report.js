@@ -153,7 +153,7 @@ module.exports = async (req, res) => {
        return null;
     };
     
-    for (const item of aaData) {
+    for (const item of allAaData) {
        try {
          const ciTimeStr = getVal(item, ['CI_TimeStr', 'cI_TimeStr', 'ci_TimeStr', 'ci_time_str']);
          const ciDateStr = getVal(item, ['CI_DateStr', 'cI_DateStr', 'ci_DateStr', 'ci_date_str']);

@@ -944,9 +944,21 @@ export default function ReportView({ refreshKey }) {
       );
       setSelectedRow(null);
       setApiStatus('connected');
-      setApiMsg(body.records?.length
-        ? `✅ Đã đồng bộ ${body.records.length} lượt check-in từ UFF.`
-        : '⚠️ UFF không trả về lượt check-in nào cho ngày đã chọn.');
+      
+      if (body.records?.length) {
+        setApiMsg(`✅ Đã đồng bộ ${body.records.length} lượt check-in từ UFF.`);
+      } else {
+        if (body.meta?.cicos > 0) {
+           console.log('--- DEBUG UFF API ---');
+           console.log('Tổng số raw CICO UFF trả về:', body.meta.cicos);
+           console.log('Mẫu 1 dòng CICO gốc chưa xử lý:', body.meta.debug?.sampleCico);
+           console.log('Mẫu 1 dòng Lịch gốc chưa xử lý:', body.meta.debug?.sampleSchedule);
+           console.log('---------------------');
+           setApiMsg('⚠️ Có dữ liệu từ UFF nhưng hệ thống không khớp được định dạng. (Hãy nhấn F12 mở Console để xem chi tiết)');
+        } else {
+           setApiMsg('⚠️ UFF không trả về lượt check-in nào cho ngày đã chọn.');
+        }
+      }
     } catch (err) {
       setApiStatus('error');
       setApiMsg(`⚠️ ${err.message || 'Không thể đồng bộ UFF.'}`);

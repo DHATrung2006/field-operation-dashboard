@@ -211,7 +211,16 @@ module.exports = async (req, res) => {
     res.setHeader('Cache-Control', 'private, no-store');
     return res.status(200).json({
       records,
-      meta: { fromDate, toDate, schedules: schedules.length, cicos: cicos.length },
+      meta: { 
+        fromDate, 
+        toDate, 
+        schedules: schedules.length, 
+        cicos: cicos.length,
+        debug: records.length === 0 ? {
+          sampleSchedule: schedules[0] || null,
+          sampleCico: cicos[0] || null,
+        } : null
+      },
     });
   } catch (error) {
     const status = error.status || 500;

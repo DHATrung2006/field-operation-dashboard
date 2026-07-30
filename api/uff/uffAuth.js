@@ -91,4 +91,4 @@ async function loginToUff() {
   return { baseUrl, cookieHeader, requestVerificationToken };
 }
 
-module.exports = { loginToUff, ApiError, uffBaseUrl };
+module.exports = { loginToUff, ApiError, uffBaseUrl, parseSetCookies, mergeCookies };

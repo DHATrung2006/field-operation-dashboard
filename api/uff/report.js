@@ -1,5 +1,5 @@
 const { getAuth } = require('firebase-admin/auth');
-const { loginToUff, ApiError } = require('./uffAuth');
+const { loginToUff, ApiError, parseSetCookies, mergeCookies } = require('./uffAuth');
 
 function ensureDate(val, name) {
   if (!val || !/^\d{4}-\d{2}-\d{2}$/.test(val)) {
@@ -35,50 +35,101 @@ module.exports = async (req, res) => {
     if (fromDate > toDate) throw new ApiError(400, 'fromDate không được sau toDate.');
 
     const { baseUrl, cookieHeader, requestVerificationToken } = await loginToUff();
-
+    let currentCookieHeader = cookieHeader;
 
     // 2. Định dạng ngày sang dd/MM/yyyy cho Datatables UFF
     const [y, m, d] = fromDate.split('-');
     const startDateStr = `${d}/${m}/${y}`;
     const [y2, m2, d2] = toDate.split('-');
     const endDateStr = `${d2}/${m2}/${y2}`;
-    
-    // 3. Gọi API lấy dữ liệu bảng
-    const dataParams = new URLSearchParams({
-      'draw': '1',
-      'start': '0',
-      'length': '10000',
-      'search[value]': '',
-      'search[regex]': 'false',
-      'order[0][column]': '4',
-      'order[0][dir]': 'desc',
-      'startDate': startDateStr,
-      'endDate': endDateStr,
-      'region': '0',
-      'city': '0',
-      'role': '-1',
-      'masterShift': '-1'
-    });
-    
-    const dataRes = await fetch(`${baseUrl}/CICO/GetDataAsync`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Cookie': cookieHeader,
-        'X-Requested-With': 'XMLHttpRequest',
-        ...(requestVerificationToken ? { 'RequestVerificationToken': requestVerificationToken } : {})
-      },
-      body: dataParams.toString()
-    });
-    
-    if (!dataRes.ok) {
-       // Thử lấy nội dung lỗi từ server
-       const errText = await dataRes.text().catch(() => '');
-       throw new ApiError(502, `Lỗi khi lấy dữ liệu: HTTP ${dataRes.status}. Chi tiết: ${errText.substring(0, 100)}`);
+
+    // 2.5 Lấy danh sách Tenant (dự án) của User
+    let tenants = [];
+    try {
+       const tenantRes = await fetch(`${baseUrl}/Tenant/GetTenantByUserId`, {
+         headers: {
+           'Cookie': currentCookieHeader,
+           'X-Requested-With': 'XMLHttpRequest'
+         }
+       });
+       const tenantData = await tenantRes.json();
+       if (tenantData && tenantData.datas) {
+          tenants = tenantData.datas;
+       }
+    } catch (e) {
+       console.warn('Không lấy được danh sách Tenant, dùng mặc định.', e.message);
     }
-    
-    const body = await dataRes.json();
-    const aaData = body.aaData || body.data || body.Data || [];
+
+    if (tenants.length === 0) {
+       tenants.push({ id: 0, name: 'Default' });
+    }
+
+    let allAaData = [];
+
+    // 3. Lặp qua từng Tenant để lấy dữ liệu bảng
+    for (const t of tenants) {
+       if (t.id > 0) {
+          try {
+             const setTenantRes = await fetch(`${baseUrl}/Tenant/SetTenantAsync?tenant=${t.id}`, {
+               method: 'POST',
+               headers: {
+                 'Content-Type': 'application/x-www-form-urlencoded',
+                 'Cookie': currentCookieHeader,
+                 'X-Requested-With': 'XMLHttpRequest',
+                 ...(requestVerificationToken ? { 'RequestVerificationToken': requestVerificationToken } : {})
+               }
+             });
+             if (setTenantRes.ok) {
+                const newCookies = parseSetCookies(setTenantRes);
+                if (newCookies.length > 0) {
+                   const oldJar = currentCookieHeader.split('; ').filter(Boolean);
+                   currentCookieHeader = mergeCookies(oldJar, newCookies).join('; ');
+                }
+             }
+          } catch (e) {
+             console.warn(`Lỗi khi switch sang tenant ${t.id}:`, e.message);
+          }
+       }
+
+       const dataParams = new URLSearchParams({
+         'draw': '1',
+         'start': '0',
+         'length': '10000',
+         'search[value]': '',
+         'search[regex]': 'false',
+         'order[0][column]': '4',
+         'order[0][dir]': 'desc',
+         'startDate': startDateStr,
+         'endDate': endDateStr,
+         'region': '0',
+         'city': '0',
+         'role': '-1',
+         'masterShift': '-1'
+       });
+       
+       const dataRes = await fetch(`${baseUrl}/CICO/GetDataAsync`, {
+         method: 'POST',
+         headers: {
+           'Content-Type': 'application/x-www-form-urlencoded',
+           'Cookie': currentCookieHeader,
+           'X-Requested-With': 'XMLHttpRequest',
+           ...(requestVerificationToken ? { 'RequestVerificationToken': requestVerificationToken } : {})
+         },
+         body: dataParams.toString()
+       });
+       
+       if (dataRes.ok) {
+          const body = await dataRes.json().catch(() => ({}));
+          const aaData = body.aaData || body.data || body.Data || [];
+          
+          // Gắn thêm project name vào từng record để dễ phân biệt (tuỳ chọn)
+          for (let item of aaData) {
+             item._tenantName = t.name || t.tenantName || t.tenantCode || 'Default';
+          }
+
+          allAaData = allAaData.concat(aaData);
+       }
+    }
     
     // 4. Chuẩn hoá dữ liệu để tương thích với Frontend
     const records = [];
@@ -114,7 +165,7 @@ module.exports = async (req, res) => {
             storeCode: '',
             storeName: storeName || 'Store UFF',
             empName: userName || 'Unknown',
-            project: '', 
+            project: item._tenantName || '', 
          };
 
          const dedupeKey = `${record.date}|${record.storeName}|${record.ciTime}|${record.empName}`;
@@ -136,9 +187,9 @@ module.exports = async (req, res) => {
       meta: {
         fromDate,
         toDate,
-        totalRaw: aaData.length,
+        totalRaw: allAaData.length,
         cicos: records.length,
-        debug: (records.length === 0 && aaData.length > 0) ? { sampleRaw: aaData[0] } : undefined,
+        debug: (records.length === 0 && allAaData.length > 0) ? { sampleRaw: allAaData[0] } : undefined,
       },
     });
   } catch (error) {

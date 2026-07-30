@@ -84,32 +84,46 @@ module.exports = async (req, res) => {
     const records = [];
     const seen = new Set();
     
+    // Helper lấy giá trị không phân biệt hoa thường
+    const getVal = (obj, keys) => {
+       for (const k of keys) {
+         if (obj[k] !== undefined && obj[k] !== null) return obj[k];
+       }
+       return null;
+    };
+    
     for (const item of aaData) {
        try {
-         if (item.cI_TimeStr === '-' || !item.cI_TimeStr || item.cI_TimeStr.startsWith('00:00')) continue;
-         if (!item.cI_DateStr) continue;
+         const ciTimeStr = getVal(item, ['CI_TimeStr', 'cI_TimeStr', 'ci_TimeStr', 'ci_time_str']);
+         const ciDateStr = getVal(item, ['CI_DateStr', 'cI_DateStr', 'ci_DateStr', 'ci_date_str']);
+         const storeName = getVal(item, ['StoreName', 'storeName']);
+         const userName = getVal(item, ['UserName', 'userName', 'UserCode', 'userCode']);
+         const itemId = getVal(item, ['Id', 'id']);
 
-         const [cd, cm, cy] = item.cI_DateStr.split('/');
+         if (ciTimeStr === '-' || !ciTimeStr || ciTimeStr.startsWith('00:00')) continue;
+         if (!ciDateStr) continue;
+
+         const [cd, cm, cy] = ciDateStr.split('/');
          const dateIso = `${cy}-${cm}-${cd}`;
 
          const record = {
             date: dateIso,
-            ciTime: item.cI_TimeStr,
-            cicoId: item.id != null ? String(item.id) : '', // dùng để gọi /api/uff/photo lấy ảnh CI
-            storeId: String(item.id || ''),
+            ciTime: ciTimeStr,
+            cicoId: itemId != null ? String(itemId) : '', // dùng để gọi /api/uff/photo lấy ảnh CI
+            storeId: String(itemId || ''),
             storeCode: '',
-            storeName: item.storeName || 'Store UFF',
-            empName: item.userName || item.userCode || 'Unknown',
-            project: '', // Web API does not easily expose brand/project
+            storeName: storeName || 'Store UFF',
+            empName: userName || 'Unknown',
+            project: '', 
          };
 
-         const dedupeKey = `${record.date}|${item.storeName}|${record.ciTime}|${record.empName}`;
+         const dedupeKey = `${record.date}|${record.storeName}|${record.ciTime}|${record.empName}`;
          if (!seen.has(dedupeKey)) {
             seen.add(dedupeKey);
             records.push(record);
          }
        } catch {
-         // Bỏ qua dòng có định dạng khác thường, không để một dòng lỗi làm hỏng cả lần đồng bộ
+         // Bỏ qua dòng lỗi
          continue;
        }
     }

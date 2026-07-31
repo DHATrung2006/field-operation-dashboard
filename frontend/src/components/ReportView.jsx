@@ -1,4 +1,5 @@
   import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { supabase } from '../firebase';
   import jsPDF from 'jspdf';
   import html2canvas from 'html2canvas';
   import { fetchMasterData } from '../api/googleSheets';
@@ -191,11 +192,12 @@
             if (lowerK.includes('mã cửa hàng') || lowerK.includes('mã siêu thị')) keyMap.storeCode = k;
             if (lowerK.includes('tên cửa hàng') || lowerK.includes('siêu thị')) keyMap.storeName = k;
             if (lowerK.includes('ngày ci')) keyMap.dateCI = k;
-            if (lowerK.includes('thời gian ci')) keyMap.timeCI = k;
+            if (lowerK.includes('thời gian ci') || lowerK.includes('giờ ci')) keyMap.timeCI = k;
+            if (lowerK.includes('thời gian co') || lowerK.includes('giờ co')) keyMap.timeCO = k;
             if (lowerK.includes('kênh')) keyMap.channel = k;
           }
 
-          if (!keyMap.empCode || !keyMap.timeCI) {
+          if (!keyMap.empCode) {
             return reject(new Error("File Excel không đúng định dạng chuẩn. Cần có cột 'Mã nhân viên' và 'Thời gian CI'."));
           }
 
@@ -212,9 +214,15 @@
             }
             
             let ciTime = null;
-            if (row[keyMap.timeCI]) {
+            if (keyMap.timeCI && row[keyMap.timeCI]) {
               ciTime = row[keyMap.timeCI].toString().trim();
               if (ciTime === '-' || ciTime === '' || ciTime === '00:00:00') ciTime = null;
+            }
+
+            let coTime = null;
+            if (keyMap.timeCO && row[keyMap.timeCO]) {
+              coTime = row[keyMap.timeCO].toString().trim();
+              if (coTime === '-' || coTime === '' || coTime === '00:00:00') coTime = null;
             }
 
             const storeCode = keyMap.storeCode ? row[keyMap.storeCode]?.toString().trim() : 'Unknown';
@@ -222,12 +230,14 @@
             const project = keyMap.channel ? row[keyMap.channel]?.toString().trim() : 'UFF Excel';
 
             records.push({
+              empCode: empCode.toUpperCase(),
+              coTime,
               date: dateIso,
               storeCode,
               storeName,
               empName: keyMap.empName ? row[keyMap.empName]?.toString().trim() : empCode,
               ciTime,
-              cicoId: `LOCAL_${dateIso}_${empCode.toUpperCase()}`,
+              cicoId: `LOCAL_${dateIso}_${empCode.toUpperCase()}_${safeStoreCode}`,
               project
             });
           }
@@ -256,14 +266,16 @@
           storeCode,
           storeName: item.storeName || storeCode,
           empName: item.empName || '—',
-          projLabel: normalizeProjName(item.project || 'Khác'),
+          projLabel: item.project || 'Khác',
           ciTime: item.ciTime || null,
+          coTime: item.coTime || null,
           cicoId: item.cicoId || null,
         };
       }
 
       const rec = storeMap[key];
       if (!rec.ciTime && item.ciTime) rec.ciTime = item.ciTime;
+      if (!rec.coTime && item.coTime) rec.coTime = item.coTime;
       if (!rec.cicoId && item.cicoId) rec.cicoId = item.cicoId;
     }
 
@@ -308,12 +320,51 @@
     // Offline Import States
     const [excelFile, setExcelFile] = useState(null);
     const [folderFiles, setFolderFiles] = useState([]);
+    const [uploadProgress, setUploadProgress] = useState(null); // { current, total, text }
     
     const excelInputRef = useRef();
     const folderInputRef = useRef();
 
     const projectRefs = useRef({});
     const modalRef     = useRef();
+
+    /* ── Tải Dữ Liệu Check-in Offline ── */
+    const fetchOfflineCico = useCallback(async (date) => {
+      try {
+        const { data, error } = await supabase
+          .from('uff_offline_cico')
+          .select('*')
+          .eq('date', date);
+        if (error) throw error;
+        
+        if (data && data.length > 0) {
+           const records = data.map(d => ({
+             date: d.date,
+             ciTime: d.ci_time,
+             coTime: d.co_time,
+             cicoId: d.cico_id,
+             storeId: d.cico_id,
+             storeCode: d.store_code,
+             storeName: d.store_name,
+             empName: d.emp_name,
+             project: d.project
+           }));
+           const session = makeUffApiSession(records, date);
+           session.source = 'uff-offline-db';
+           session.fileName = `Dữ liệu lưu trữ (Offline) · ${date}`;
+           setSessions(prev => {
+             const others = prev.filter(p => p.source !== 'uff-offline-db');
+             return [session, ...others];
+           });
+        }
+      } catch (err) {
+         console.error("Lỗi khi tải dữ liệu offline từ Supabase:", err);
+      }
+    }, []);
+
+    useEffect(() => {
+      fetchOfflineCico(selDate);
+    }, [selDate, fetchOfflineCico]);
 
     /* ── Load Master Data ── */
     useEffect(() => {
@@ -436,6 +487,7 @@
         else {
           const ex = m.get(k);
           if (!ex.ciTime && v.ciTime) ex.ciTime = v.ciTime;
+          if (!ex.coTime && v.coTime) ex.coTime = v.coTime;
           if (!ex.cicoId && v.cicoId) ex.cicoId = v.cicoId;
         }
       }
@@ -453,8 +505,8 @@
         isoDate,
         storeCode:   (m['Store Code'] || m['Mart Code'] || '').trim(),
         storeName:   (m['Store Name'] || m['Mart Name'] || '').trim(),
-        project:     normalizeProjName(rawProj),
-        brand:       (m['Brand'] || '').trim() || normalizeProjName(rawProj),
+        project:     rawProj || 'Khác',
+        brand:       (m['Brand'] || '').trim() || rawProj || 'Khác',
         workingTime: (m['Working Time'] || '').trim(),
         sup:         (m['Sup'] || m['Supervisor'] || '').trim(),
         region:      (m['Region'] || '').trim(),
@@ -600,10 +652,12 @@
   const groupedRows = useMemo(() => {
     const m = new Map();
     for (const r of displayRows) {
-      const k = normalizeProjName(r.project);
+      const k = r.project; // Keep original raw project name
       if (!m.has(k)) m.set(k, { project: k, brand: r.brand, rows: [] });
       const grp = m.get(k);
-      if (r.brand && r.brand !== '—' && r.brand !== k) grp.brand = r.brand;
+      if (r.brand && r.brand !== '—' && r.brand !== k && (!grp.brand || grp.brand === k || grp.brand === '—')) {
+        grp.brand = r.brand;
+      }
       grp.rows.push(r);
     }
     return [...m.values()];
@@ -883,7 +937,7 @@
                   <table className="w-full border-collapse text-xs min-w-[900px]">
                     <thead>
                       <tr className="bg-slate-50 text-slate-500 text-left">
-                        {['Ngày','Store Code','Tên Store / Siêu Thị','Nhân Viên (BA)','Ca Làm (Lịch)','SUP','Ảnh CI','Giờ CI','Trạng Thái'].map(h=>(
+                        {['Ngày','Store Code','Tên Store / Siêu Thị','Nhân Viên (BA)','Ca Làm (Lịch)','SUP','Ảnh CI','Giờ CI', 'Giờ CO','Trạng Thái'].map(h=>(
                           <th key={h} className="px-3.5 py-2.5 text-[10px] font-bold uppercase tracking-wider whitespace-nowrap border-b border-slate-200">{h}</th>
                         ))}
                       </tr>

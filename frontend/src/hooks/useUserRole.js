@@ -31,7 +31,7 @@ export default function useUserRole() {
       }
       try {
         const token = await firebaseUser.getIdToken();
-        const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/users/sync`, {
+        const response = await fetch('/api/users/sync', {
           method: 'GET',
           headers: {
             Authorization: `Bearer ${token}`,

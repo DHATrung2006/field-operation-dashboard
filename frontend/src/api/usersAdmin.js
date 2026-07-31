@@ -1,10 +1,8 @@
 import { getIdToken } from '../firebase';
 
-const BASE = import.meta.env.VITE_BACKEND_URL;
-
 async function authFetch(path, options = {}) {
   const token = await getIdToken();
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`/api${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',

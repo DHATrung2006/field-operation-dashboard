@@ -13,6 +13,7 @@ export default function Header({ user, onLogout, activeTab, onTabChange, onRefre
     { id: 'schedule', label: 'Lịch làm BA',   icon: 'fa-calendar-days' },
     { id: 'hr',       label: 'HR',             icon: 'fa-user-plus' },
     { id: 'report',   label: 'Báo cáo UFF',   icon: 'fa-camera' },
+    ...(role === 'Dev' ? [{ id: 'admin', label: 'Quản trị', icon: 'fa-user-shield' }] : []),
   ];
 
   return (

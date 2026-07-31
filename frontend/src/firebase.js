@@ -1,5 +1,12 @@
 import { initializeApp, getApps } from 'firebase/app';
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
+import {
+  getAuth,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  GoogleAuthProvider,
+  signOut,
+  onAuthStateChanged,
+} from 'firebase/auth';
 import { createClient } from '@supabase/supabase-js';
 
 // Firebase configuration – read from VITE_ environment variables or safe defaults
@@ -53,6 +60,17 @@ export const signIn = async (email, password) => {
     }
     throw err;
   }
+};
+
+/**
+ * Sign in with Google account (popup). Any account that has never logged in before
+ * is created server-side with status "pending" by /api/users/sync and must be
+ * approved by a Dev before it can use the dashboard.
+ */
+export const signInWithGoogle = async () => {
+  const provider = new GoogleAuthProvider();
+  const res = await signInWithPopup(auth, provider);
+  return res;
 };
 
 /** Sign out current user */

@@ -3,7 +3,7 @@
 // verify Firebase ID token, load Supabase (service role, bypass RLS) và xác nhận
 // người gọi là Dev đã được duyệt.
 
-import * as admin from 'firebase-admin';
+import admin from 'firebase-admin';
 import { createClient } from '@supabase/supabase-js';
 
 if (!admin.apps.length) {

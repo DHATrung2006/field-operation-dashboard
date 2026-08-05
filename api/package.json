@@ -1,5 +1,4 @@
 {
-  "type": "module",
   "dependencies": {
     "@supabase/supabase-js": "^2.110.8",
     "csv-writer": "^1.6.0",

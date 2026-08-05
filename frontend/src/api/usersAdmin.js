@@ -18,16 +18,16 @@ async function authFetch(path, options = {}) {
 }
 
 /** Danh sách toàn bộ tài khoản (chỉ Dev). */
-export const listUsers = () => authFetch('/users/list');
+export const listUsers = () => authFetch('/users/admin');
 
 /** Đổi role và/hoặc status (approve/block/unblock) của 1 tài khoản. */
 export const updateUser = (email, patch) =>
-  authFetch('/users/update', { method: 'POST', body: JSON.stringify({ email, ...patch }) });
+  authFetch('/users/admin?action=update', { method: 'POST', body: JSON.stringify({ email, ...patch }) });
 
 /** Thêm trước (pre-invite) 1 tài khoản theo email, trước khi họ từng đăng nhập. */
 export const createUser = ({ email, role, status }) =>
-  authFetch('/users/create', { method: 'POST', body: JSON.stringify({ email, role, status }) });
+  authFetch('/users/admin?action=create', { method: 'POST', body: JSON.stringify({ email, role, status }) });
 
 /** Thu hồi quyền truy cập (xoá row) của 1 tài khoản. */
 export const deleteUser = (email) =>
-  authFetch('/users/delete', { method: 'POST', body: JSON.stringify({ email }) });
+  authFetch('/users/admin?action=delete', { method: 'POST', body: JSON.stringify({ email }) });

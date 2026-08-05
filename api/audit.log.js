@@ -1,7 +1,7 @@
 // api/audit.log.js (Vercel Serverless Function)
 // Logs user actions for NPA compliance.
 
-import admin from 'firebase-admin';
+import * as admin from 'firebase-admin';
 import { createClient } from '@supabase/supabase-js';
 
 if (!admin.apps.length) {

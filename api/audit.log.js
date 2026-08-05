@@ -1,11 +1,12 @@
 // api/audit.log.js (Vercel Serverless Function)
 // Logs user actions for NPA compliance.
 
-import admin from 'firebase-admin';
+import { getApps, initializeApp } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
 import { createClient } from '@supabase/supabase-js';
 
-if (!admin.apps.length) {
-  admin.initializeApp();
+if (!getApps().length) {
+  initializeApp();
 }
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL;
@@ -21,7 +22,7 @@ export default async function handler(req, res) {
   if (!token) return res.status(401).json({ error: 'Missing token' });
 
   try {
-    const decoded = await admin.auth().verifyIdToken(token);
+    const decoded = await getAuth().verifyIdToken(token);
     const { uid } = decoded;
     const { action, details } = req.body;
     if (!action) return res.status(400).json({ error: 'Missing action' });

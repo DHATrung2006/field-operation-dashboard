@@ -3,10 +3,11 @@
 // verify Firebase ID token, load Supabase (service role, bypass RLS) và xác nhận
 // người gọi là Dev đã được duyệt.
 
-import admin from 'firebase-admin';
+import { getApps, initializeApp, cert } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
 import { createClient } from '@supabase/supabase-js';
 
-if (!admin.apps.length) {
+if (!getApps().length) {
   const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
   if (serviceAccountJson) {
     try {
@@ -14,12 +15,12 @@ if (!admin.apps.length) {
       if (serviceAccount.private_key) {
         serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
       }
-      admin.initializeApp({ credential: admin.cert(serviceAccount) });
+      initializeApp({ credential: cert(serviceAccount) });
     } catch {
       throw new Error('FIREBASE_SERVICE_ACCOUNT không phải JSON hợp lệ.');
     }
   } else {
-    admin.initializeApp();
+    initializeApp();
   }
 }
 
@@ -63,7 +64,7 @@ export async function verifyRequestToken(req) {
     throw err;
   }
   try {
-    return await admin.auth().verifyIdToken(match[1]);
+    return await getAuth().verifyIdToken(match[1]);
   } catch {
     const err = new Error('Token không hợp lệ hoặc đã hết hạn');
     err.status = 401;

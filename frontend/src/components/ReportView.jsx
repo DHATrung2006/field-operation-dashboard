@@ -237,7 +237,8 @@ import { supabase } from '../firebase';
               storeName,
               empName: keyMap.empName ? row[keyMap.empName]?.toString().trim() : empCode,
               ciTime,
-              cicoId: `LOCAL_${dateIso}_${empCode.toUpperCase()}_${safeStoreCode}`,
+              // Key phải khớp với localPhotoMap: LOCAL_{date}_{empCode}
+              cicoId: `LOCAL_${dateIso}_${empCode.toUpperCase()}`,
               project
             });
           }
@@ -425,24 +426,34 @@ import { supabase } from '../firebase';
     }
     
     try {
-      // 1. Map folder files
+      // 1. Map folder files — chỉ lấy ảnh CI, dùng empCode+date làm key
       let photoCount = 0;
       if (folderFiles.length > 0) {
         for (const file of folderFiles) {
           if (!file.type.startsWith('image/')) continue;
           const parts = file.webkitRelativePath.split('/');
-          if (parts.length < 3) continue;
-          
+          if (parts.length < 4) continue;
+
+          // Tìm thư mục ngày (8 chữ số, vd: 20260730)
           const dateIndex = parts.findIndex(p => /^\d{8}$/.test(p));
           if (dateIndex === -1) continue;
 
+          // Chỉ lấy ảnh CI (bỏ qua CO)
+          const typeFolder = parts[dateIndex + 3];
+          if (typeFolder && typeFolder.toUpperCase() !== 'CI') continue;
+
           const rawDate = parts[dateIndex];
           const dateIso = `${rawDate.slice(0,4)}-${rawDate.slice(4,6)}-${rawDate.slice(6,8)}`;
-          
+
+          // parts[dateIndex+1] = 'AE0002_Aeon Binh Tan' (store folder)
+          // parts[dateIndex+2] = 'NCBA0134_Vo Huong Quynh' (employee folder)
           const empStr = parts[dateIndex + 2];
           if (!empStr) continue;
 
           const empCode = empStr.split('_')[0].toUpperCase();
+          if (!empCode || empCode.length < 4) continue; // bỏ qua nếu không phải mã NV hợp lệ
+
+          // Key khớp 100% với cicoId trong parseExcelCI
           const cicoId = `LOCAL_${dateIso}_${empCode}`;
 
           if (!window.localPhotoMap[cicoId]) window.localPhotoMap[cicoId] = [];

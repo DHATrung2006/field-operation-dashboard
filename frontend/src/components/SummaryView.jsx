@@ -36,6 +36,17 @@ function todayISO() {
   return `${y}-${m}-${day}`;
 }
 
+/* ─── First & last day of the current month as "YYYY-MM-DD" ────────── */
+function monthStartISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+}
+function monthEndISO() {
+  const d = new Date();
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+  return `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`;
+}
+
 export default function SummaryView({ refreshKey = 0 }) {
   const [masterRows, setMasterRows] = useState([]);
   const [hrRows,     setHrRows]     = useState([]);
@@ -45,8 +56,8 @@ export default function SummaryView({ refreshKey = 0 }) {
   const [selSup,          setSelSup]          = useState('');
   const [onlyNewHR,       setOnlyNewHR]       = useState(false);
   const [onlyActiveProj,  setOnlyActiveProj]  = useState(false);
-  const [dateFrom,        setDateFrom]        = useState('2026-07-01');
-  const [dateTo,          setDateTo]          = useState('2026-07-31');
+  const [dateFrom,        setDateFrom]        = useState(monthStartISO);
+  const [dateTo,          setDateTo]          = useState(monthEndISO);
 
   const contentRef = useRef();
 
@@ -339,9 +350,9 @@ export default function SummaryView({ refreshKey = 0 }) {
           </div>
 
           {/* Reset */}
-          {(selSup || onlyNewHR || dateFrom !== '2026-07-01' || dateTo !== '2026-07-31') && (
+          {(selSup || onlyNewHR || dateFrom !== monthStartISO() || dateTo !== monthEndISO()) && (
             <button
-              onClick={() => { setSelSup(''); setOnlyNewHR(false); setDateFrom('2026-07-01'); setDateTo('2026-07-31'); }}
+              onClick={() => { setSelSup(''); setOnlyNewHR(false); setDateFrom(monthStartISO()); setDateTo(monthEndISO()); }}
               className="pb-0.5 text-xs text-slate-400 hover:text-rose-600 transition-colors underline font-medium"
             >
               Đặt lại bộ lọc
@@ -366,9 +377,9 @@ export default function SummaryView({ refreshKey = 0 }) {
         <KpiCard
           gradient="from-violet-500 to-purple-600"
           icon="fa-briefcase"
-          label="Tổng Dự Án"
-          value={projectBlocks.length}
-          sub={`Đang hoạt động: ${activeProjSet2Months.size} dự án`}
+          label="Tổng Dự Án Đang Chạy"
+          value={activeProjSet2Months.size}
+          sub={`Tổng tất cả: ${projectBlocks.length} dự án (bao gồm đã ngưng)`}
         />
         <KpiCard
           gradient="from-emerald-500 to-teal-600"

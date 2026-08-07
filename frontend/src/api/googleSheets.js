@@ -253,8 +253,17 @@ export function normalizeRegion(r, prov, storeName) {
   return map[r] || 'Tỉnh';
 }
 
+/**
+ * Chuẩn hoá tên SUP để hiển thị đồng nhất — sheet có chỗ ghi tắt (CHIEN, HOA...), có chỗ ghi
+ * đầy đủ hoa/thường lẫn lộn (Lê Thị Hoa, LÊ THỊ HOA...) → luôn quy về chữ hoa toàn bộ, để cùng
+ * 1 SUP không bị tách thành nhiều giá trị khác nhau khi lọc/nhóm.
+ */
+export function normalizeSup(str) {
+  return String(str || '').trim().toUpperCase();
+}
+
 export function getSups(rows) {
-  return [...new Set(rows.map(r => r['Sup'] || r['SUP'] || r['Supervisor']).filter(Boolean))].sort();
+  return [...new Set(rows.map(r => normalizeSup(r['Sup'] || r['SUP'] || r['Supervisor'])).filter(Boolean))].sort();
 }
 
 export function getProjects(rows) {

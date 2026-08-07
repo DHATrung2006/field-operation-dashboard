@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { fetchMasterData, fetchHRStatus, normalizeRegion, getSups } from '../api/googleSheets';
+import { fetchMasterData, fetchHRStatus, normalizeRegion, getSups, normalizeSup } from '../api/googleSheets';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
@@ -84,22 +84,27 @@ export default function SummaryView({ refreshKey = 0 }) {
   /* ── Supervisors list ────────────────────────────────────────────── */
   const sups = useMemo(() => getSups(masterRows), [masterRows]);
 
-  /* ── Build store map (grouped strictly by Store Name) ─────────────── */
+  /* ── Build store map (grouped theo Store Code — chỉ dùng Tên thay thế khi dòng
+     không có mã — khớp đúng cách "Lịch Làm BA" đang đếm, để 2 tab cho ra cùng 1 con số
+     siêu thị trên cùng nguồn master_data). "BA" = số Project khác nhau (Set, tự dedupe)
+     gán cho mỗi mã Store, KHÔNG cộng dồn theo số ngày/dòng lịch. ── */
   const allStoresMap = useMemo(() => {
     const map = {};
     masterRows.forEach(r => {
       const storeName = (r['Store Name'] || r['Store Code'] || '').trim();
       if (!storeName) return;
-      const normKey = storeName.toLowerCase();
-      const reg     = normalizeRegion(r['Region'], r['Province'], storeName);
+      const storeCode = (r['Store Code'] || '').trim();
+      const normKey   = (storeCode || storeName).toLowerCase();
+      const nameKey   = storeName.toLowerCase();
+      const reg       = normalizeRegion(r['Region'], r['Province'], storeName);
 
       if (!map[normKey]) {
         map[normKey] = {
-          code:        (r['Store Code'] || '').trim(),
+          code:        storeCode,
           name:        storeName,
           region:      reg,
           province:    (r['Province'] || '—').trim(),
-          isNewHR:     hrStoreSet.has(normKey),
+          isNewHR:     hrStoreSet.has(nameKey),
           projects:    new Set(),
           brands:      new Set(),
           sups:        new Set(),
@@ -108,9 +113,10 @@ export default function SummaryView({ refreshKey = 0 }) {
       }
 
       const st = map[normKey];
+      if (hrStoreSet.has(nameKey)) st.isNewHR = true;
       if (r['Project']) st.projects.add(r['Project'].trim());
       if (r['Brand'])   st.brands.add(r['Brand'].trim());
-      if (r['Sup'])     st.sups.add(r['Sup'].trim());
+      if (r['Sup'])     st.sups.add(normalizeSup(r['Sup']));
       if ((st.region === 'Tỉnh' || !st.region) && reg !== 'Tỉnh') st.region = reg;
       if ((!st.province || st.province === '—') && r['Province']) st.province = r['Province'].trim();
 
@@ -123,7 +129,7 @@ export default function SummaryView({ refreshKey = 0 }) {
           status:  r['Status'] || '',
           project: (r['Project'] || '—').trim(),
           brand:   (r['Brand'] || '—').trim(),
-          sup:     (r['Sup'] || '—').trim(),
+          sup:     normalizeSup(r['Sup']) || '—',
         });
       }
     });

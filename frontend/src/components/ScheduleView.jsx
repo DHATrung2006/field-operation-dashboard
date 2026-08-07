@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { fetchMasterData, fetchQCData, normalizeRegion, getSups, getProjects, getWeek } from '../api/googleSheets';
+import { fetchMasterData, fetchQCData, normalizeRegion, getSups, getProjects, getWeek, normalizeSup } from '../api/googleSheets';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
@@ -38,7 +38,12 @@ export default function ScheduleView({ refreshKey = 0 }) {
   const [selSup,     setSelSup]     = useState('');
   const [selRegion,  setSelRegion]  = useState('');
   const [selProject, setSelProject] = useState('');
-  const [selWeek,    setSelWeek]    = useState('');
+  const currentWeek = useMemo(() => {
+    const d = new Date();
+    // Default getWeek function is imported from googleSheets
+    return getWeek(`${d.getDate()}/${d.getMonth()+1}/${d.getFullYear()}`);
+  }, []);
+  const [selWeek,    setSelWeek]    = useState(currentWeek ? currentWeek.toString() : '');
   const contentRef = useRef();
 
   useEffect(() => {
@@ -74,7 +79,7 @@ export default function ScheduleView({ refreshKey = 0 }) {
           name:     r['Store Name'] || '',
           project:  r['Project'] || '',
           brand:    r['Brand'] || '',
-          sup:      r['Sup'] || '',
+          sup:      normalizeSup(r['Sup']),
           region:   normalizeRegion(r['Region'], r['Province'], r['Store Name']),
           province: r['Province'] || r['Tỉnh'] || '',
           status:   r['Status'] || '',
@@ -233,8 +238,7 @@ export default function ScheduleView({ refreshKey = 0 }) {
                     {DAY_OF_WEEK[d]}
                   </th>
                 ))}
-                <th className="px-3 py-3 font-semibold uppercase tracking-wide text-center whitespace-nowrap">Ngày Công</th>
-                <th className="px-3 py-3 font-semibold uppercase tracking-wide text-center whitespace-nowrap">QC Tuần Trước</th>
+                <th className="px-3 py-3 font-semibold uppercase tracking-wide text-center whitespace-nowrap">Target</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -269,16 +273,8 @@ export default function ScheduleView({ refreshKey = 0 }) {
                       </td>
                     );
                   })}
-                  <td className="px-3 py-2.5 text-center">
-                    <span className="bg-blue-100 text-blue-800 font-bold px-2.5 py-0.5 rounded-full text-[11px]">
-                      {s.workingDays}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2.5 text-center">
-                    {s.qcScore > 0
-                      ? <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${QC_CLR(s.qcScore)}`}>{s.qcScore}%</span>
-                      : <span className="text-slate-400 text-[11px]">Chưa có</span>
-                    }
+                  <td className="px-3 py-2.5 text-center text-slate-400">
+                    —
                   </td>
                 </tr>
               ))}

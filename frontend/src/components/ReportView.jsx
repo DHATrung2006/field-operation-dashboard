@@ -2,7 +2,7 @@
 import { supabase } from '../firebase';
   import jsPDF from 'jspdf';
   import html2canvas from 'html2canvas';
-  import { fetchMasterData } from '../api/googleSheets';
+  import { fetchMasterData, normalizeSup } from '../api/googleSheets';
   import { getIdToken } from '../firebase';
   import * as XLSX from 'xlsx';
 
@@ -510,7 +510,7 @@ import { supabase } from '../firebase';
         project:     rawProj || 'Khác',
         brand:       (m['Brand'] || '').trim() || rawProj || 'Khác',
         workingTime: (m['Working Time'] || '').trim(),
-        sup:         (m['Sup'] || m['Supervisor'] || '').trim(),
+        sup:         normalizeSup(m['Sup'] || m['Supervisor']),
         region:      (m['Region'] || '').trim(),
       };
     }).filter(Boolean);

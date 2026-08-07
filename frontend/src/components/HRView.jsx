@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { fetchHRStatus } from '../api/googleSheets';
+import { fetchHRStatus, normalizeSup } from '../api/googleSheets';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, Legend,
   ResponsiveContainer, CartesianGrid, Cell,
@@ -75,7 +75,7 @@ export default function HRView({ refreshKey = 0 }) {
         city:  g('City'),
         chan:  g('Channel'),
         store: g('Mart Name'),
-        sup:   g('Sup'),
+        sup:   normalizeSup(g('Sup')),
         pic:   g('PIC tuyển dụng + PV','PIC tuyen dung + PV'),
         picHR: g('Phân bổ PIC HR kèm'),
         rType: g('Loại Tuyển Dụng','Loai Tuyen Dung'),

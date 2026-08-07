@@ -171,11 +171,13 @@ module.exports = async (req, res) => {
             date: dateIso,
             ciTime: ciTimeStr,
             cicoId: itemId != null ? String(itemId) : '', // dùng để gọi /api/uff/photo lấy ảnh CI
-            storeId: String(itemId || ''),
+            // Không có storeCode thật từ UFF — KHÔNG lấy itemId (id của lượt check-in) làm
+            // storeId giả, vì nó là số ngẫu nhiên theo lượt CI, không phải mã cửa hàng. Để trống
+            // để frontend tự fallback sang storeName khi so khớp (đáng tin cậy hơn nhiều).
             storeCode: '',
             storeName: storeName || 'Store UFF',
             empName: userName || 'Unknown',
-            project: item._tenantName || '', 
+            project: item._tenantName || '',
          };
 
          const dedupeKey = `${record.date}|${record.storeName}|${record.ciTime}|${record.empName}`;

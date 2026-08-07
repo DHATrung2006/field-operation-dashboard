@@ -13,27 +13,13 @@ import { supabase } from '../firebase';
     'Chưa CI':  'bg-rose-100   text-rose-800   border-rose-200',
   };
 
-  // UFF zip folder prefix & store code → normalized project name for actual projects in sheet
-  const PREFIX_MAP = {
-    PNG:'P&G', PG:'P&G', 'P&G':'P&G', BHX:'P&G', 'BÁCH HÓA XANH':'P&G', 'BACH HOA XANH':'P&G',
-    MAG:'MAGGI', MGI:'MAGGI', MAGGI:'MAGGI', MGI_:'MAGGI',
-    NCF:'NESCAFE', NSF:'NESCAFE', NSC:'NESCAFE', NES:'NESCAFE', NESTCAFE:'NESCAFE', NESCAFE:'NESCAFE',
-    VDA:'VINDA', VND:'VINDA', VIN:'VINDA', VINDA:'VINDA', DRYPERS:'VINDA', TENA:'VINDA',
-    STM:'STMB', STMB:'STMB', SUNTORY:'STMB', PEPSI:'STMB', SPB:'STMB',
-    AEO:'AEON', AEON:'AEON', AEONMALL:'AEON', AE:'AEON',
-    LOT:'LOTTE', LOTTE:'LOTTE',
-    COP:'COOP', COOP:'COOP', COOPXTRA:'COOP',
-    BIG:'BIG C / GO', BIGC:'BIG C / GO', GO:'BIG C / GO',
-    WIN:'WINMART', WINMART:'WINMART', WM:'WINMART',
-    EMA:'EMART', EMART:'EMART',
-    MM:'MEGA MARKET', MEGAMARKET:'MEGA MARKET', MEGA:'MEGA MARKET',
-    LCM:'LAN CHI', LANCHI:'LAN CHI',
-  };
-
-  const KNOWN_PROJECTS = new Set([
-    'P&G', 'MAGGI', 'NESCAFE', 'VINDA', 'STMB', 'AEON', 'LOTTE',
-    'COOP', 'BIG C / GO', 'WINMART', 'EMART', 'MEGA MARKET', 'LAN CHI',
-  ]);
+  // Layout cho Báo Cáo Khách Hàng (thẻ ảnh lớn, render ẩn rồi chụp html2canvas theo từng trang)
+  // Giảm còn 2 thẻ/hàng (trước là 3) để thẻ rộng hơn — ảnh CI không còn bị bóp/cắt nhiều theo
+  // chiều ngang, và khung chữ bên dưới đủ rộng để hiện tên store/BA mà không bị cắt/che mất.
+  const PRINT_PAGE_W = 1500;
+  const PRINT_CARDS_PER_ROW = 2;
+  const PRINT_ROWS_PER_PAGE = 2;
+  const PRINT_CARDS_PER_PAGE = PRINT_CARDS_PER_ROW * PRINT_ROWS_PER_PAGE;
 
   /* ─── Pure Helpers ──────────────────────────────────────────── */
   function todayISO() {
@@ -68,27 +54,11 @@ import { supabase } from '../firebase';
     return m ? m.join('') : '';
   }
 
-  /** Universal Project Name Normalizer */
-  function normalizeProjName(p) {
-    if (!p) return 'Khác';
-    const raw = String(p).trim().toUpperCase();
-    for (const [k, v] of Object.entries(PREFIX_MAP)) {
-      if (raw === k || raw.startsWith(k)) return v;
-    }
-    if (/NEST|NCF|NSF|NSC|NES/.test(raw)) return 'NESCAFE';
-    if (/PNG|P&G|PG|BHX/.test(raw)) return 'P&G';
-    if (/MAGGI|MAG|MGI/.test(raw)) return 'MAGGI';
-    if (/VINDA|VDA|VND|VIN/.test(raw)) return 'VINDA';
-    if (/STMB|STM|SUNTORY/.test(raw)) return 'STMB';
-    if (/AEON|AEO/.test(raw)) return 'AEON';
-    if (/LOTTE|LOT/.test(raw)) return 'LOTTE';
-    if (/COOP|COP/.test(raw)) return 'COOP';
-    if (/BIGC|BIG|GO_/.test(raw)) return 'BIG C / GO';
-    if (/WIN|WM_/.test(raw)) return 'WINMART';
-    if (/EMART|EMA/.test(raw)) return 'EMART';
-    if (/MEGA|MM_/.test(raw)) return 'MEGA MARKET';
-    if (/LANCHI|LCM/.test(raw)) return 'LAN CHI';
-    return p;
+  /** Cắt chuỗi theo số ký tự cố định (không dựa vào CSS ellipsis — html2canvas render không
+      luôn đáng tin cậy với overflow/text-overflow, dễ gây chữ đè lên thẻ bên cạnh khi in PDF). */
+  function truncate(str, maxChars) {
+    const s = String(str || '');
+    return s.length > maxChars ? s.slice(0, maxChars - 1).trimEnd() + '…' : s;
   }
 
   /** Flexible date parser into YYYY-MM-DD */
@@ -107,50 +77,66 @@ import { supabase } from '../firebase';
     return null;
   }
 
-  /** Robust store matcher — ALWAYS checks project compatibility first */
+  /** Robust store matcher — so khớp theo mã/tên cửa hàng thực tế.
+      (Trước đây có thêm bước chặn theo "dự án đã biết" (PREFIX_MAP/KNOWN_PROJECTS), nhưng
+      danh sách đó chỉ là rút gọn của vài chuỗi bán lẻ lớn và còn gộp nhầm cả tên dự án/kênh
+      (CRV, BA VINDA...) vào tên brand (P&G, VINDA...) — gây chặn nhầm nhiều match hợp lệ.
+      Đã bỏ bước đó, chỉ dựa vào mã/tên cửa hàng — đáng tin cậy và cụ thể hơn nhiều.) */
   function isStoreMatch(sched, zip) {
-    const pSched = normalizeProjName(sched.project);
-    const pZip   = normalizeProjName(zip.projLabel);
-
-    // ─── PROJECT COMPATIBILITY CHECK (must pass first) ───────────
-    const schedIsKnown = KNOWN_PROJECTS.has(pSched);
-    const zipIsKnown   = KNOWN_PROJECTS.has(pZip);
-
-    // Both have recognized projects → must be the same project
-    if (schedIsKnown && zipIsKnown && pSched !== pZip) return false;
-
-    // Zip has a known project but schedule's project is unrecognized (e.g., CRV001)
-    // → different project system, don't mix them
-    if (zipIsKnown && !schedIsKnown && pSched !== 'Khác') return false;
-
-    // Schedule has a known project but zip's project is unrecognized → same logic
-    if (schedIsKnown && !zipIsKnown && pZip !== 'Khác') return false;
-
     // ─── STORE CODE MATCH ────────────────────────────────────────
+    // Khớp CHÍNH XÁC toàn bộ mã (không còn dùng includes()/chuỗi con) — mã ngắn/rút gọn (vd
+    // Excel chỉ ghi "010") vốn vừa là chuỗi con của "BHX010" vừa của "LCM010", 2 cửa hàng khác
+    // chuỗi hoàn toàn không liên quan — dùng includes() sẽ luôn dính nhầm vào bất kỳ dòng Lịch
+    // nào duyệt tới trước (từng khiến "BHX Lê Văn Việt" bị gộp nhầm check-in vào "LCM010").
     const codeS = cleanStoreStr(sched.storeCode).replace(/\s/g, '');
     const codeZ = cleanStoreStr(zip.storeCode).replace(/\s/g, '');
-    if (codeS && codeZ && codeS.length >= 3 && (codeS === codeZ || codeS.includes(codeZ) || codeZ.includes(codeS))) {
+    if (codeS && codeZ && codeS.length >= 3 && codeS === codeZ) {
       return true;
     }
 
     // ─── NUMERIC CODE MATCH ──────────────────────────────────────
-    const numS = extractDigits(sched.storeCode + ' ' + sched.storeName);
-    const numZ = extractDigits(zip.storeCode + ' ' + zip.storeName);
-    if (numS && numZ && numS.length >= 3 && numZ.length >= 3 && (numS === numZ || numS.includes(numZ) || numZ.includes(numS))) {
-      return true;
+    // Chỉ lấy số từ MÃ cửa hàng (không lấy số trong TÊN nữa — số nhà/số quận trong địa chỉ dễ
+    // trùng ngẫu nhiên với mã 1 cửa hàng khác). Bắt buộc khớp CHÍNH XÁC toàn bộ chuỗi số, VÀ nếu
+    // cả 2 mã đều có phần chữ (prefix chuỗi, vd BHX/LCM) thì phần chữ đó cũng phải khớp — nếu
+    // không, 2 chuỗi khác nhau nhưng trùng số thứ tự (BHX010 vs LCM010) sẽ bị nhận nhầm là cùng
+    // 1 cửa hàng dù thuộc 2 chuỗi bán lẻ hoàn toàn khác nhau.
+    const numS = extractDigits(sched.storeCode);
+    const numZ = extractDigits(zip.storeCode);
+    if (numS && numZ && numS.length >= 3 && numZ.length >= 3 && numS === numZ) {
+      const prefixS = cleanStoreStr(sched.storeCode).replace(/[0-9\s]/g, '');
+      const prefixZ = cleanStoreStr(zip.storeCode).replace(/[0-9\s]/g, '');
+      
+      // Nếu cả hai đều có prefix thì prefix phải khớp (vd: BHX == BHX)
+      if (prefixS && prefixZ && prefixS === prefixZ) return true;
+      
+      // Nếu một trong hai KHÔNG CÓ prefix (chỉ có số), KHÔNG TỰ ĐỘNG MATCH NGAY
+      // vì "010" có thể là của "BHX010" hoặc "LCM010". Để phần NAME MATCH quyết định tiếp.
     }
 
     // ─── NAME MATCH ──────────────────────────────────────────────
     const nameS = cleanStoreStr(sched.storeName);
     const nameZ = cleanStoreStr(zip.storeName);
     if (nameS && nameZ) {
-      if (nameS.includes(nameZ) || nameZ.includes(nameS)) return true;
-
-      const wordsZ = nameZ.split(' ').filter(w => w.length > 2);
-      if (wordsZ.length >= 2) {
-        const matchCount = wordsZ.filter(w => nameS.includes(w)).length;
-        if (matchCount / wordsZ.length >= 0.5) return true;
+      // Kiểm tra xem tên có quá ngắn hoặc chỉ là số không
+      const isSShortOrNum = /^\d+$/.test(nameS.replace(/\s/g, '')) || nameS.length < 5;
+      const isZShortOrNum = /^\d+$/.test(nameZ.replace(/\s/g, '')) || nameZ.length < 5;
+      
+      // Chỉ dùng includes khi cả 2 chuỗi đều đủ dài và có chữ (tránh "010" includes trong "bhx 010")
+      if (!isSShortOrNum && !isZShortOrNum) {
+        if (nameS.includes(nameZ) || nameZ.includes(nameS)) return true;
       }
+
+      // Khớp gần đúng theo từ — yêu cầu TOÀN BỘ từ có nghĩa (>1 ký tự, để không loại nhầm tên
+      // chuỗi ngắn như "GO") của MỘT bên đều xuất hiện ở bên kia (không chỉ đa số/50%). Nhiều
+      // chuỗi bán lẻ khác nhau đặt chi nhánh cùng 1 khu vực nên tên hay trùng phần địa danh
+      // (vd: "GO Thăng Long", "Mega Thăng Long", "Winmart Thăng Long" đều có "Thăng Long") —
+      // đòi khớp đa số vẫn nhầm chuỗi vì từ phân biệt chuỗi ("GO"/"Mega") bị bỏ qua. Kiểm tra
+      // theo cả 2 chiều để vẫn khớp được khi 1 bên có thêm vài từ mô tả phụ (vd: quận/phường).
+      const wordsZ = nameZ.split(' ').filter(w => w.length > 1);
+      const wordsS = nameS.split(' ').filter(w => w.length > 1);
+      const zAllInS = wordsZ.length >= 2 && wordsZ.every(w => nameS.includes(w));
+      const sAllInZ = wordsS.length >= 2 && wordsS.every(w => nameZ.includes(w));
+      if (zAllInS || sAllInZ) return true;
     }
 
     return false;
@@ -258,7 +244,9 @@ import { supabase } from '../firebase';
 
     for (const item of records) {
       const date = parseVNDate(item.date || '') || selectedDate;
-      const storeCode = String(item.storeCode || item.storeId || item.storeName || 'STORE').trim();
+      // Không dùng item.storeId làm mã cửa hàng thay thế — với dữ liệu đồng bộ online, storeId
+      // (nếu có) chỉ là id của lượt check-in, không phải mã cửa hàng, dùng để so khớp sẽ bị nhiễu.
+      const storeCode = String(item.storeCode || item.storeName || 'STORE').trim();
       const key = `${date}||${storeCode.toUpperCase()}`;
       if (!storeMap[key]) {
         storeMap[key] = {
@@ -328,6 +316,9 @@ import { supabase } from '../firebase';
 
     const projectRefs = useRef({});
     const modalRef     = useRef();
+    const printRefs    = useRef({});
+    const [exportingClient, setExportingClient] = useState(false);
+    const [exportProject,  setExportProject]    = useState('Tất cả');
 
     /* ── Tải Dữ Liệu Check-in Offline ── */
     const fetchOfflineCico = useCallback(async (date) => {
@@ -586,11 +577,10 @@ import { supabase } from '../firebase';
         ? calcStatus(ciTime, sched.workingTime)
         : 'Chưa CI';
 
-      // Use zip's known project when schedule project is unrecognized (e.g., raw code like CRV001)
-      const schedProjKnown = KNOWN_PROJECTS.has(normalizeProjName(sched.project));
-      const bestProject = schedProjKnown
-        ? normalizeProjName(sched.project)
-        : (zip ? normalizeProjName(zip.projLabel) : normalizeProjName(sched.project));
+      // Dự án hiển thị NGUYÊN VĂN từ Lịch (giống cách tab Summary đang hiển thị: r['Project'].trim(),
+      // không chuẩn hoá/gộp nhóm gì cả) — CRV, BHX, BA VINDA... đều là dự án thật, giữ đúng tên,
+      // không để nhãn chung chung từ zip (thường chỉ là tên tenant UFF) đè lên.
+      const bestProject = sched.project !== 'Khác' ? sched.project : (zip?.projLabel || 'Khác');
 
       mergedRows.push({
         id:          rowId,
@@ -610,10 +600,16 @@ import { supabase } from '../firebase';
     });
 
     // 2. Loop unmatched Zip entries
+    // Nếu ngày này CÓ Lịch Master nhưng lượt check-in này không khớp được store nào trong Lịch
+    // (tên/mã cửa hàng trên UFF khác với Lịch), KHÔNG dùng zip.projLabel (chỉ là tên tenant/công ty
+    // đăng ký trên UFF, ví dụ "LMC") làm tên dự án — dễ hiểu lầm là cửa hàng thuộc dự án khác (bug
+    // "BHX Lê Văn Việt nhảy xuống LMC"). Gom hết các lượt không khớp vào 1 nhóm cảnh báo riêng để
+    // biết ngay là cần kiểm tra lại tên/mã cửa hàng trong Lịch, thay vì tưởng nhầm là sai dự án.
+    const hasScheduleForDate = schedForDate.length > 0;
     zipForDate.forEach((zip, i) => {
       if (matchedZipKeys.has(zip.key)) return;
 
-      const normP  = normalizeProjName(zip.projLabel);
+      const rawProj = hasScheduleForDate ? '⚠️ Chưa khớp Lịch' : (zip.projLabel || 'Khác');
       const rowId  = `zip_${zip.date}_${zip.storeCode}_${i}`;
       const ciTime = zip.ciTime || '—';
       const status = calcStatus(ciTime, null);
@@ -621,8 +617,8 @@ import { supabase } from '../firebase';
       mergedRows.push({
         id:          rowId,
         date:        zip.date,
-        project:     normP,
-        brand:       normP,
+        project:     rawProj,
+        brand:       zip.projLabel || 'Khác',
         storeCode:   zip.storeCode,
         storeName:   zip.storeName,
         empName:     zip.empName || '—',
@@ -638,8 +634,7 @@ import { supabase } from '../firebase';
     // Filters
     let filtered = mergedRows;
     if (selProject && selProject !== 'Tất cả') {
-      const normSelP = normalizeProjName(selProject);
-      filtered = filtered.filter(r => r.project === normSelP || r.brand === normSelP);
+      filtered = filtered.filter(r => r.project === selProject || r.brand === selProject);
     }
     if (selStatus)
       filtered = filtered.filter(r => r.status === selStatus);
@@ -673,6 +668,26 @@ import { supabase } from '../firebase';
     }
     return [...m.values()];
   }, [displayRows]);
+
+  /* Chia nhỏ groupedRows thành từng trang (mỗi trang tối đa PRINT_CARDS_PER_PAGE store)
+     để mỗi trang PDF chụp 1 canvas riêng — tránh bị vỡ ảnh/cắt ngang thẻ khi 1 dự án có quá nhiều store. */
+  const printChunks = useMemo(() => {
+    const chunks = [];
+    for (const grp of groupedRows) {
+      const totalPages = Math.max(1, Math.ceil(grp.rows.length / PRINT_CARDS_PER_PAGE));
+      for (let i = 0; i < totalPages; i++) {
+        chunks.push({
+          key: `${grp.project}__${i}`,
+          project: grp.project,
+          brand: grp.brand,
+          rows: grp.rows.slice(i * PRINT_CARDS_PER_PAGE, (i + 1) * PRINT_CARDS_PER_PAGE),
+          pageIndex: i + 1,
+          totalPages,
+        });
+      }
+    }
+    return chunks;
+  }, [groupedRows]);
 
   /* ── KPIs ── */
   const totalScheduled = displayRows.length;
@@ -724,6 +739,72 @@ import { supabase } from '../firebase';
     const w = pdf.internal.pageSize.getWidth();
     pdf.addImage(canvas.toDataURL('image/png'),'PNG',0,0,w,(canvas.height*w)/canvas.width);
     pdf.save(`Store_${selectedRow.storeCode}_${selectedRow.date}.pdf`);
+  };
+
+  /* ── Xuất Báo Cáo Khách Hàng: mỗi store 1 thẻ ảnh lớn, gộp theo dự án ── */
+  const exportClientPDF = async () => {
+    const rowsToExport = exportProject === 'Tất cả'
+      ? displayRows
+      : displayRows.filter(r => r.project === exportProject);
+    const chunksToExport = exportProject === 'Tất cả'
+      ? printChunks
+      : printChunks.filter(c => c.project === exportProject);
+
+    if (!rowsToExport.length || !chunksToExport.length) {
+      alert(`Không có dữ liệu của dự án "${exportProject}" để xuất báo cáo.`);
+      return;
+    }
+    setExportingClient(true);
+    try {
+      // Nạp trước toàn bộ ảnh CI đang thiếu cho các dòng sẽ xuất
+      const pendingIds = rowsToExport
+        .map(r => r.cicoId)
+        .filter(id => id && !photoCache[id]);
+      if (pendingIds.length) {
+        await Promise.all(pendingIds.map(id => loadCiPhoto(id)));
+      }
+
+      // Chờ React render lại DOM ẩn với ảnh mới + chờ ảnh vẽ xong trước khi chụp canvas
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+      await new Promise(resolve => setTimeout(resolve, 400));
+
+      const pdf = new jsPDF('l', 'mm', 'a4');
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const pageAR = pageW / pageH;
+
+      let first = true;
+      for (const chunk of chunksToExport) {
+        const el = printRefs.current[chunk.key];
+        if (!el) continue;
+        const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+        if (!first) pdf.addPage();
+
+        // Fit "contain": luôn hiện trọn nội dung trong trang, không bao giờ bị cắt mất,
+        // dù tỉ lệ khung ảnh/thẻ chụp được có lệch với tỉ lệ trang A4 ngang.
+        const canvasAR = canvas.width / canvas.height;
+        let drawW, drawH;
+        if (canvasAR > pageAR) {
+          drawW = pageW;
+          drawH = pageW / canvasAR;
+        } else {
+          drawH = pageH;
+          drawW = pageH * canvasAR;
+        }
+        const xOff = (pageW - drawW) / 2;
+        const yOff = (pageH - drawH) / 2;
+        pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', xOff, yOff, drawW, drawH);
+        first = false;
+      }
+
+      const projSlug = exportProject === 'Tất cả' ? 'TatCa' : exportProject.replace(/[^\p{L}\p{N}]+/gu, '_');
+      pdf.save(`BaoCao_KhachHang_${projSlug}_${selDate}.pdf`);
+    } catch (e) {
+      alert(e.message || 'Không thể xuất báo cáo.');
+    } finally {
+      setExportingClient(false);
+    }
   };
 
   /* ── UFF API sync ── */
@@ -800,6 +881,18 @@ import { supabase } from '../firebase';
             className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition-all cursor-pointer">
             <i className="fa-solid fa-file-pdf" /> Xuất PDF Tất Cả
           </button>
+          <div className="flex items-center rounded-xl border border-indigo-200 bg-indigo-50 overflow-hidden">
+            <select value={exportProject} onChange={e => setExportProject(e.target.value)}
+              title="Chọn dự án sẽ xuất báo cáo"
+              className="bg-transparent text-indigo-800 text-xs font-bold pl-3 pr-1.5 py-2 outline-none cursor-pointer max-w-[140px]">
+              {projectsOnDate.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <button onClick={exportClientPDF} disabled={exportingClient}
+              className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold pl-2.5 pr-3.5 py-2 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+              <i className={`fa-solid ${exportingClient ? 'fa-spinner animate-spin' : 'fa-images'}`} />
+              {exportingClient ? 'Đang tạo...' : 'Xuất Báo Cáo Khách Hàng'}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1163,6 +1256,90 @@ import { supabase } from '../firebase';
           </div>
         </div>
       )}
+
+      {/* ── DOM ẨN: layout thẻ ảnh cho Báo Cáo Khách Hàng, chụp html2canvas theo từng trang ── */}
+      <div aria-hidden="true" style={{ position: 'fixed', top: 0, left: '-99999px', zIndex: -1 }}>
+        {printChunks.map(chunk => (
+          <div key={chunk.key} ref={el => { printRefs.current[chunk.key] = el; }}
+            style={{ width: PRINT_PAGE_W, background: '#ffffff', fontFamily: 'Arial, Helvetica, sans-serif', padding: 28, boxSizing: 'border-box' }}>
+            {/* Header trang */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '3px solid #0f172a', paddingBottom: 10, marginBottom: 16 }}>
+              <div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: '#0f172a' }}>Báo Cáo Check-In UFF</div>
+                <div style={{ fontSize: 13, color: '#475569', marginTop: 2 }}>{chunk.project} · Ngày {selDate}</div>
+              </div>
+              <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                Trang {chunk.pageIndex}/{chunk.totalPages} · {chunk.rows.length} store
+              </div>
+            </div>
+
+            {/* Lưới thẻ store */}
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${PRINT_CARDS_PER_ROW}, 1fr)`, gap: 18 }}>
+              {chunk.rows.map(r => {
+                const p = getPhotoEntry(r.cicoId);
+                const photoSrc = p.state === 'ready' ? p.photos[0] : null;
+                const statusColor = r.status === 'Đúng giờ' ? '#059669' : r.status === 'Đi trễ' ? '#d97706' : '#e11d48';
+                const statusBg    = r.status === 'Đúng giờ' ? '#ecfdf5' : r.status === 'Đi trễ' ? '#fffbeb' : '#fff1f2';
+                const empLine = `${truncate(r.storeCode, 20)} · BA: ${truncate(r.empName || '—', 24)}`;
+                return (
+                  <div key={r.id} style={{
+                    border: '1px solid #e2e8f0',
+                    borderTop: `5px solid ${statusColor}`,
+                    borderRadius: 14,
+                    overflow: 'hidden',
+                    background: '#fff',
+                    boxShadow: '0 2px 6px rgba(15,23,42,0.10)',
+                  }}>
+                    {/* background-image thay vì <img>+object-fit: html2canvas không luôn tôn trọng
+                        object-fit và hay kéo méo ảnh. background-size:contain (thay vì cover) để
+                        giữ nguyên toàn bộ ảnh gốc, không cắt/bóp mất phần nào. Bọc thêm 1 lớp
+                        padding ở div ngoài (nền xám) để ảnh không dán sát mép thẻ — nhìn có khung,
+                        đỡ trơ so với để ảnh tràn viền. */}
+                    {photoSrc ? (
+                      <div style={{ height: 420, backgroundColor: '#f1f5f9', padding: 12, boxSizing: 'border-box' }}>
+                        <div style={{
+                          width: '100%',
+                          height: '100%',
+                          borderRadius: 8,
+                          backgroundImage: `url("${photoSrc}")`,
+                          backgroundSize: 'contain',
+                          backgroundPosition: 'center',
+                          backgroundRepeat: 'no-repeat',
+                        }} />
+                      </div>
+                    ) : (
+                      <div style={{ height: 420, backgroundColor: '#f1f5f9', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+                        <div style={{ fontSize: 42, opacity: 0.3 }}>{r.status === 'Chưa CI' ? '🚫' : '📷'}</div>
+                        <div style={{ color: '#94a3b8', fontSize: 14, fontWeight: 700, lineHeight: '18px', textAlign: 'center', padding: '0 16px' }}>
+                          {r.status === 'Chưa CI' ? 'Chưa Check-In' : 'Không có ảnh CI'}
+                        </div>
+                      </div>
+                    )}
+                    <div style={{ padding: '14px 16px' }}>
+                      <div style={{ fontWeight: 800, fontSize: 16, lineHeight: '21px', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+                        {truncate(r.storeName, 40)}
+                      </div>
+                      <div style={{ fontSize: 12, lineHeight: '17px', color: '#64748b', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden' }}>
+                        {empLine}
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 10, borderTop: '1px solid #f1f5f9' }}>
+                        <span style={{ fontSize: 13, lineHeight: '17px', fontWeight: 700, color: '#0f172a' }}>Giờ CI: {r.ciTime || '—'}</span>
+                        <span style={{ fontSize: 11, lineHeight: '14px', fontWeight: 800, color: statusColor, background: statusBg, padding: '3px 9px', borderRadius: 999, whiteSpace: 'nowrap' }}>
+                          {r.status}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ marginTop: 16, paddingTop: 8, borderTop: '1px solid #e2e8f0', fontSize: 10, color: '#94a3b8' }}>
+              Field Operation Dashboard · Xuất lúc {new Date().toLocaleString('vi-VN')}
+            </div>
+          </div>
+        ))}
+      </div>
 
     {/* ── LIGHTBOX ── */}
       {previewImage && (

@@ -1324,7 +1324,7 @@ import { supabase } from '../firebase';
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, paddingTop: 12, borderTop: '1px solid #e2e8f0' }}>
                         <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>Giờ CI: {r.ciTime || '—'}</span>
-                        <span style={{ fontSize: 11, fontWeight: 800, color: statusColor, background: statusBg, padding: '4px 10px', borderRadius: 999, whiteSpace: 'nowrap' }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: '#ffffff', background: statusColor, padding: '4px 10px', borderRadius: 999, whiteSpace: 'nowrap', boxShadow: '0 1px 2px rgba(0,0,0,0.1)' }}>
                           {r.status}
                         </span>
                       </div>

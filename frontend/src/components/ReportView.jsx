@@ -1315,16 +1315,16 @@ import { supabase } from '../firebase';
                         </div>
                       </div>
                     )}
-                    <div style={{ padding: '14px 16px' }}>
-                      <div style={{ fontWeight: 800, fontSize: 16, lineHeight: '21px', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+                    <div style={{ padding: '16px' }}>
+                      <div style={{ fontWeight: 800, fontSize: 16, lineHeight: 1.4, color: '#0f172a', whiteSpace: 'nowrap' }}>
                         {truncate(r.storeName, 40)}
                       </div>
-                      <div style={{ fontSize: 12, lineHeight: '17px', color: '#64748b', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden' }}>
+                      <div style={{ fontSize: 13, lineHeight: 1.4, color: '#64748b', marginTop: 4, whiteSpace: 'nowrap' }}>
                         {empLine}
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 10, borderTop: '1px solid #f1f5f9' }}>
-                        <span style={{ fontSize: 13, lineHeight: '17px', fontWeight: 700, color: '#0f172a' }}>Giờ CI: {r.ciTime || '—'}</span>
-                        <span style={{ fontSize: 11, lineHeight: '14px', fontWeight: 800, color: statusColor, background: statusBg, padding: '3px 9px', borderRadius: 999, whiteSpace: 'nowrap' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, paddingTop: 12, borderTop: '1px solid #e2e8f0' }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>Giờ CI: {r.ciTime || '—'}</span>
+                        <span style={{ fontSize: 11, fontWeight: 800, color: statusColor, background: statusBg, padding: '4px 10px', borderRadius: 999, whiteSpace: 'nowrap' }}>
                           {r.status}
                         </span>
                       </div>

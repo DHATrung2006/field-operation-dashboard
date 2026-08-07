@@ -1117,6 +1117,9 @@ import { supabase } from '../firebase';
                                 {r.ciTime || '—'}
                               </span>
                             </td>
+                            <td className="px-3.5 py-3 font-mono font-bold text-[11px] text-slate-500 whitespace-nowrap">
+                              {r.coTime || '—'}
+                            </td>
                             <td className="px-3.5 py-3 whitespace-nowrap">
                               <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border ${STATUS_STYLE[r.status]||''}`}>
                                 {r.status==='Đúng giờ'?'✅ Đúng giờ':r.status==='Đi trễ'?'⚠️ Đi trễ':'🔴 Chưa CI'}
